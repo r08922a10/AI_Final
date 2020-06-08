@@ -199,7 +199,7 @@ class Simulatoin:
         episodes:
     """
 
-    def __init__(self, agent: Agent, environment: Environment):
+    def __init__(self, agent: Agent, environment: Environment, optimizer=optim.Adam(self.agent.parameters(), lr=1e-3)):
 
         self.agent = agent
 
@@ -207,7 +207,7 @@ class Simulatoin:
 
         self.gamma = 0.9
 
-        self.optimizer = optim.Adam(self.agent.parameters(), lr=1e-3)
+        self.optimizer = optimizer
     
     def policy_gradient_update(self):
 
@@ -277,14 +277,14 @@ def main():
 
     init_legal_actions = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 
-    params_agent = {
+    args_agent = {
         "dim_input": 5, 
         "dim_output": 3,
         "max_actions": 10,
         "init_legal_actions": init_legal_actions
     }
 
-    agent = Agent(**params_agent).to(device)
+    agent = Agent(**args_agent).to(device)
 
     env = Environment()
 
