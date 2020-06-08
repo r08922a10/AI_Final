@@ -281,7 +281,7 @@ def main():
 
     init_legal_actions = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 
-    agent = Agent(5, 3, 10, init_legal_actions)
+    agent = Agent(5, 3, 10, init_legal_actions).to(device)
 
     env = Environment()
 
