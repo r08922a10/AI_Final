@@ -1,5 +1,4 @@
 import argparse
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,7 +7,9 @@ from torch.distributions import Categorical
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
+
 class Environment:
+
     """A epidemic infection simulation model.
 
     Attributes
@@ -23,7 +24,8 @@ class Environment:
 
         step: Make a state transition.
 
-        obeserved_state: To transform a global state to an obsevable state for agent.
+        obeserved_state: To transform a global state to an obsevable state for
+                         agent.
 
         start(property): Return the starting starting state of a trial.
 
@@ -33,7 +35,7 @@ class Environment:
 
         self.is_terminal = False
 
-        self._start = torch.tensor([0 ,0, 0, 0, 0], device=device)
+        self._start = torch.tensor([0, 0, 0, 0, 0], device=device)
 
     def init_state(self):
         """ We need to define this function to initialize the environment.
@@ -60,13 +62,12 @@ class Environment:
 
         Returns
         -------
-            next_sate (torch tensor ): The next state (aka  s' ) given by s and a .
+            next_sate (torch tensor ): The next state (aka  s' ).
             reward (int) : reward of (s, a, s')
             is_terminal (boolean) : if next_state a terminal state
 
         """
-        
-        next_sate = torch.tensor([0 ,1, 2, 3, 4, 6, 7], device=device).float()
+        next_sate = torch.tensor([0, 1, 2, 3, 4, 6, 7], device=device).float()
 
         reward = 1
 
@@ -85,7 +86,7 @@ class Environment:
 
         """
 
-        observed_state = torch.tensor([0 ,1, 2, 3, 4], device=device).float()
+        observed_state = torch.tensor([0, 1, 2, 3, 4], device=device).float()
 
         return observed_state
 
@@ -158,7 +159,6 @@ class Agent(nn.Module):
 
         self.rewards = []
 
-
     def forward(self, state):
 
         state_vector = self.net(state)
@@ -194,13 +194,12 @@ class Simulatoin:
 
     Methods
     -------
-        policy_gradient_update: 
+        policy_gradient_update:
 
         episodes:
-        
     """
 
-    def __init__(self, agent:Agent, environment:Environment):
+    def __init__(self, agent: Agent, environment: Environment):
 
         self.agent = agent
 
@@ -219,9 +218,9 @@ class Simulatoin:
         # v_T = 0
         # agent.rewards : [r_0, r_1, r_2, ........ r_T]
 
-        v = 0 # V_T = 0
+        v = 0   # V_T = 0
 
-        for r in self.agent.rewards[::-1]: # r_T, r_{T-1}, .....r_0
+        for r in self.agent.rewards[::-1]:   # r_T, r_{T-1}, .....r_0
 
             v = r + self.gamma * v
 
@@ -232,7 +231,7 @@ class Simulatoin:
         accumulated_rewards = (accumulated_rewards - accumulated_rewards.mean()) / (accumulated_rewards.std() + 1e-9)
 
         for log_prob, r in zip(self.agent.log_probs, accumulated_rewards):
-            
+
             policy_loss += (-log_prob * r)
 
         self.optimizer.zero_grad()
@@ -240,7 +239,6 @@ class Simulatoin:
         policy_loss.backward()
 
         self.optimizer.step()
-
 
     def episodes(self, max_episodes=3, max_steps=10):
 
@@ -264,9 +262,7 @@ class Simulatoin:
 
                 self.agent.rewards.append(reward)
 
-                reward_episode+=reward
-
-                
+                reward_episode += reward
 
                 if is_terminal:
 
@@ -276,12 +272,19 @@ class Simulatoin:
 
             self.agent.init_agent()
 
-def main():
 
+def main():
 
     init_legal_actions = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 
-    agent = Agent(5, 3, 10, init_legal_actions).to(device)
+    params_agent = {
+        "dim_input": 5, 
+        "dim_output": 3,
+        "max_actions": 10,
+        "init_legal_actions": init_legal_actions
+    }
+
+    agent = Agent(**params_agent).to(device)
 
     env = Environment()
 
@@ -290,7 +293,6 @@ def main():
     game.episodes()
 
 
-
-
 if __name__ == "__main__":
+
     main()
