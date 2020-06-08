@@ -5,94 +5,213 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.distributions import Categorical
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
+with open('config.json') as f:
+    data = f.read()
+config = json.loads(data)
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")    
 
 class Environment:
-
     """A epidemic infection simulation model.
-
     Attributes
     ----------
-        is_terminal:
+        is_terminal: 
+        _start: 
+        
+        state:
+            state[0]: number of masks
+            state[1]: number of transparency
+            state[2]: number of total quarantine
+            state[3]: 1: shutdown / 0: not shutdown
+            state[4]: 1: close moving / 0: open moving
+            state[5]: number of value       
+            state[6]: recording transparency bias
+            state[7]: recording transparency rate
 
-        _start:
-
+        S: number of susceptible
+        E: number of exposed
+        E_move: number of exposed from moving
+        Q: number of quarantine
+        Q_move: number of quarantine from moving
+        I: number of infectious
+        R: number of recovered
+        
+        gamma_mask: the factor of masks to affect transmission rate
+        gamma_recover: the factor of mask trade to affect recover rate
+        gamma_detect: the factor of mask trade to affect COVID detection
+        gamma_move: the factor of moving to affect population of moving
+        gamma_shut: the factor of shutdown to affect infectious degree
     Methods
     -------
         init_state: Prepare the environment for the starting state of a trial.
-
         step: Make a state transition.
-
         obeserved_state: To transform a global state to an obsevable state for
                          agent.
-
+        update_gamma_mask: To update the value of gamma_mask
+        update_gamma_move: To update the value of gamma_move
         start(property): Return the starting starting state of a trial.
-
     """
-
     def __init__(self):
-
+        self._start = torch.zeros(8).to(device)
         self.is_terminal = False
-
-        self._start = torch.tensor([0, 0, 0, 0, 0], device=device)
-
+    
     def init_state(self):
+        
         """ We need to define this function to initialize the environment.
-
-        Returns
-        -------
+        Returns:
             The starting state of the environment
 
         """
-
+        
+        self.S, self.E, self.E_move, self.Q, self.Q_move, self.I, self.R = config['S0'], config['E0'], config['E0_move'], config['Q0'], config['Q0_move'], config['I0'], config['R0']
+        self.state = self.start
+        self.state[0] = config['N_mask0']
+        self.state[1] = config['N_transparency0']
+        self.state[2] = self.Q + self.Q_move
+        self.state[3] = 0
+        self.state[4] = 0
+        self.state[5] = config['N_value0']
+        self.state[6] = 0
+        self.state[7] = 0
+        
+        self.gamma_mask = config['gamma_mask0']
+        self.gamma_recover = config['gamma_recover0']
+        self.gamma_detect = config['gamma_detect0']
+        self.gamma_move = config['gamma_move0']
+        self.gamma_shut = config['gamma_shut0']
         self.is_terminal = False
 
-        return self.start
+        return self.state
+
+
 
     def step(self, s, a, t):
-
         """ We need to define this function as the transition function.(SEIR....)
 
-        Args
-        ----
+        Args:
             s: current state
             a: action taken by agent in current state
-            t: time
+                0: mask trade
+                1: transparency to 0.5 (current transparency should be smaller than 0.5)
+                2: transparency to 1.0 (current transparency should be smaller than 1.0)
+                3: dereasing transparency (transparency should not be 0)
+                4: switch shutdown mode
+                5: switch moving mode
+                6: no action
+            t: time(per day)
 
-        Returns
-        -------
-            next_sate (torch tensor ): The next state (aka  s' ).
-            reward (int) : reward of (s, a, s')
-            is_terminal (boolean) : if next_state a terminal state
+        Returns:
+            next_sate: The next state (aka  s' ) given by s and a .
+            reward of (s, a, s')
 
         """
-        next_sate = torch.tensor([0, 1, 2, 3, 4, 6, 7], device=device).float()
+        
+        """ update state """
+        # recording tranparency bias and rate
+        if t == config['early_threshold']:
+            self.state[6] = (2 * self.state[1] + 1) / (self.state[1] + 1)
+            self.state[7] = self.state[1] / (self.state[1] + 1)
+        
+        self.state[0] = (t * (config['MAX_mask'] - 0.1) / config['early_threshold'] + 0.1) if t <= config['early_threshold'] else config['MAX_mask']
+        self.state[5] = max(0, self.state[5] - config['shut_rate'] * t) if self.state[3] else min(config['N_value0'], self.state[5] + 0.7 * config['shut_rate'] * t)
+        if a == 0:
+            self.state[0] = (self.state[0] * config['N_total'] - config['N_donate']) / config['N_total']
+            # AIT
+            if np.random.uniform() < 0.01:
+                self.state[5] += config['Up_mask']
+            
+            # Medical technology improvement
+            if np.random.uniform() < 0.01:
+                self.gamma_recover += config['Up_recover']
+                self.gamma_detect += config['Up_detect']
 
-        reward = 1
+            # update gamma_mask
+                self.update_gamma_mask()
+        
+        # modify transparency to 0.5
+        elif a == 1:
+            self.state[1] = 0.5   
+            self.update_gamma_mask()
+            self.update_gamma_move(t)
+        
+        # modify transparency to 1.0
+        elif a == 2:
+            self.state[1] = 1.0   
+            self.update_gamma_mask()
+            self.update_gamma_move(t)
+        
+        # decrease transparency 
+        elif a == 3:
+            self.state[1] -= 0.1   
+            self.update_gamma_mask()
+            self.update_gamma_move(t)
 
-        return next_sate, reward, self.is_terminal
+        # switch shutdown mode
+        elif a == 4:
+            self.state[3] = int(not self.state[3])
+       
+        # switch moving mode
+        elif a == 5:
+            self.state[4] = int(not self.state[4])
+            self.state[5] = self.state[5] - config['Up_move'] if self.state[4] else self.state[5] + config['Up_move']
+        
+        """ update SEIR """
+        beta = self.gamma_mask * config['beta0']
+
+        SI = int(config['rI0'] * beta * self.I * self.S / config['N_total'])
+        SE = int(self.gamma_shut * config['rE0'] * beta * self.E * self.S / config['N_total'])
+        SE_move = int(beta * self.S * self.gamma_move * config['P_move0'] * (1 - 0.85 * self.state[4]))
+        
+        EI = int(config['alpha_ei0'] * self.E)
+        EI_move = int(config['alpha_ei_move0'] * self.E_move)
+        EQ = int(self.E - np.random.binomial(self.E, max(0, 1 - self.gamma_detect * config['alpha_eq0']))) if (self.Q < config['MAX_Q']) else 0
+        if (self.Q + EQ) > config['MAX_Q']:
+            EQ  = config['MAX_Q'] - self.Q
+        EQ_move = int(self.E_move - np.random.binomial(self.E_move, max(0, 1 - self.gamma_detect * config['alpha_eq_move0']))) if (self.Q_move < config['MAX_Q_move']) else 0
+        if self.Q_move + EQ_move > config['MAX_Q_move']:
+            EQ_move = config['MAX_Q_move'] - self.Q_move
+        
+        QI = int(config['alpha_qi0'] * self.Q)
+        QI_move = int(config['alpha_qi_move0'] * self.Q_move)
+        
+        IR = int(self.gamma_recover * config['alpha_ir0'] * self.I)
+
+        self.S = self.S - SI - SE - SE_move
+        self.E = self.E + SI + SE - EI - EQ
+        self.E_move = self.E_move + SE_move - EI_move - EQ_move
+        self.Q = self.Q + EQ - QI 
+        self.Q_move = self.Q_move + EQ_move - QI_move 
+        self.I = self.I + EI + EI_move + QI + QI_move - IR
+        self.R = self.R + IR
+        self.state[2] = self.Q + self.Q_move
+
+        """ update reward """
+        reward = 5566
+
+        return self.state, reward, self.is_terminal
 
     def obeserved_state(self, state):
-        """ To transform a global state to an obsevable state for agent.
+        """ To transform the global state to the obsevable state for agent.
 
-        Args
-        ----
+        Args:
             state : global state
 
-        Returns
-        -------
+        Returns:
             observed_state : obsevable state for agent
 
         """
+        return state[:5]
+    
+    def update_gamma_mask(self,):
+        self.gamma_mask = min((1 - 0.8 * self.state[1]) * config['MAX_mask'] / self.state[0], 1)
 
-        observed_state = torch.tensor([0, 1, 2, 3, 4], device=device).float()
-
-        return observed_state
+    def update_gamma_move(self, t):
+        return (self.state[1] + 1) if t <= config['early_threshold'] else (self.state[6] - self.state[7] * self.state[1])
+    
 
     @property
     def start(self):
         return self._start
+
 
 
 class Agent(nn.Module):
