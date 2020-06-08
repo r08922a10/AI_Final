@@ -199,7 +199,7 @@ class Simulatoin:
         episodes:
     """
 
-    def __init__(self, agent: Agent, environment: Environment, optimizer=optim.Adam(self.agent.parameters(), lr=1e-3)):
+    def __init__(self, agent: Agent, environment: Environment, optimizer=None):
 
         self.agent = agent
 
@@ -288,7 +288,7 @@ def main():
 
     env = Environment()
 
-    game = Simulatoin(agent, env)
+    game = Simulatoin(agent, env, optim.Adam(agent.parameters(), lr=1e-3))
 
     game.episodes()
 
