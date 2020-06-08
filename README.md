@@ -1,7 +1,7 @@
 # AI_Final
 
-## Sample Code
+## REINFORCE Method
 
 ```
-python3 main.py
+python3 rl_reinforce.py
 ```
