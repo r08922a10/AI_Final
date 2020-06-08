@@ -9,6 +9,25 @@ from torch.distributions import Categorical
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class Environment:
+    """A epidemic infection simulation model.
+
+    Attributes
+    ----------
+        is_terminal:
+
+        _start:
+
+    Methods
+    -------
+        init_state: Prepare the environment for the starting state of a trial.
+
+        step: Make a state transition.
+
+        obeserved_state: To transform a global state to an obsevable state for agent.
+
+        start(property): Return the starting starting state of a trial.
+
+    """
 
     def __init__(self):
 
@@ -19,7 +38,8 @@ class Environment:
     def init_state(self):
         """ We need to define this function to initialize the environment.
 
-        Returns:
+        Returns
+        -------
             The starting state of the environment
 
         """
@@ -32,12 +52,14 @@ class Environment:
 
         """ We need to define this function as the transition function.(SEIR....)
 
-        Args:
+        Args
+        ----
             s: current state
             a: action taken by agent in current state
             t: time
 
-        Returns:
+        Returns
+        -------
             next_sate (torch tensor ): The next state (aka  s' ) given by s and a .
             reward (int) : reward of (s, a, s')
             is_terminal (boolean) : if next_state a terminal state
@@ -53,10 +75,12 @@ class Environment:
     def obeserved_state(self, state):
         """ To transform a global state to an obsevable state for agent.
 
-        Args:
+        Args
+        ----
             state : global state
 
-        Returns:
+        Returns
+        -------
             observed_state : obsevable state for agent
 
         """
@@ -71,7 +95,42 @@ class Environment:
 
 
 class Agent(nn.Module):
+    """ The decision-making policy network for the simulation.
+
+    Attributes
+    ----------
+        init_legal_actions:
+
+        legal_actions:
+
+        log_probs:
+
+        rewards:
+
+        action_embeddings:
+
+        net:
+
+    Methods
+    -------
+        init_agent: reset the history fo the log probability and rewards
+
+        forward: the inference of the policy network
+
+        select_actions: return the action sampled from the policy nwetwork
+
+    """
     def __init__(self, dim_input, dim_output, max_actions, init_legal_actions):
+        """ Initialize the parameters of the policynwtwork
+
+        Args
+        ----
+            dim_input:
+            dim_output:
+            max_actions:
+            init_legal_actions:
+
+        """
 
         super(Agent, self).__init__()
 
@@ -124,6 +183,22 @@ class Agent(nn.Module):
 
 
 class Simulatoin:
+    """ The interaction between environment(epidemic infection model) and agent(policy network)
+
+    Attributes
+    ----------
+        agent
+        enviroment
+        gamma
+        optimizer
+
+    Methods
+    -------
+        policy_gradient_update: 
+
+        episodes:
+        
+    """
 
     def __init__(self, agent:Agent, environment:Environment):
 
