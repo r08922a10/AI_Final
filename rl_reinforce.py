@@ -18,17 +18,7 @@ class Environment:
     ----------
         is_terminal: 
         _start: 
-        
-        state:
-            state[0]: number of masks
-            state[1]: number of transparency
-            state[2]: number of total quarantine
-            state[3]: 1: shutdown / 0: not shutdown
-            state[4]: 1: close moving / 0: open moving
-            state[5]: number of value       
-            state[6]: recording transparency bias
-            state[7]: recording transparency rate
-
+                
         S: number of susceptible
         E: number of exposed
         E_move: number of exposed from moving
@@ -46,8 +36,7 @@ class Environment:
     -------
         init_state: Prepare the environment for the starting state of a trial.
         step: Make a state transition.
-        obeserved_state: To transform a global state to an obsevable state for
-                         agent.
+        obeserved_state: To transform a global state to an obsevable state for agent.
         update_gamma_mask: To update the value of gamma_mask
         update_gamma_move: To update the value of gamma_move
         start(property): Return the starting starting state of a trial.
@@ -63,17 +52,15 @@ class Environment:
             The starting state of the environment
 
         """
-        
         self.S, self.E, self.E_move, self.Q, self.Q_move, self.I, self.R = config['S0'], config['E0'], config['E0_move'], config['Q0'], config['Q0_move'], config['I0'], config['R0']
-        self.state = self.start
-        self.state[0] = config['N_mask0']
-        self.state[1] = config['N_transparency0']
-        self.state[2] = self.Q + self.Q_move
-        self.state[3] = 0
-        self.state[4] = 0
-        self.state[5] = config['N_value0']
-        self.state[6] = 0
-        self.state[7] = 0
+        self._start[0] = config['N_mask0']
+        self._start[1] = config['N_transparency0']
+        self._start[2] = self.Q + self.Q_move
+        self._start[3] = 0
+        self._start[4] = 0
+        self._start[5] = config['N_value0']
+        self._start[6] = 0
+        self._start[7] = 0
         
         self.gamma_mask = config['gamma_mask0']
         self.gamma_recover = config['gamma_recover0']
@@ -82,15 +69,23 @@ class Environment:
         self.gamma_shut = config['gamma_shut0']
         self.is_terminal = False
 
-        return self.state
+        return self.start
 
-
-
+   
     def step(self, s, a, t):
         """ We need to define this function as the transition function.(SEIR....)
 
         Args:
             s: current state
+                s[0]: number of masks
+                s[1]: number of transparency
+                s[2]: number of total quarantine
+                s[3]: 1: shutdown / 0: not shutdown
+                s[4]: 1: close moving / 0: open moving
+                s[5]: number of value       
+                s[6]: recording transparency bias
+                s[7]: recording transparency rate
+
             a: action taken by agent in current state
                 0: mask trade
                 1: transparency to 0.5 (current transparency should be smaller than 0.5)
@@ -108,18 +103,20 @@ class Environment:
         """
         
         """ update state """
+        s = s.clone()
+        
         # recording tranparency bias and rate
         if t == config['early_threshold']:
-            self.state[6] = (2 * self.state[1] + 1) / (self.state[1] + 1)
-            self.state[7] = self.state[1] / (self.state[1] + 1)
+            s[6] = (2 * s[1] + 1) / (s[1] + 1)
+            s[7] = s[1] / (s[1] + 1)
         
-        self.state[0] = (t * (config['MAX_mask'] - 0.1) / config['early_threshold'] + 0.1) if t <= config['early_threshold'] else config['MAX_mask']
-        self.state[5] = max(0, self.state[5] - config['shut_rate'] * t) if self.state[3] else min(config['N_value0'], self.state[5] + 0.7 * config['shut_rate'] * t)
+        s[0] = (t * (config['MAX_mask'] - 0.1) / config['early_threshold'] + 0.1) if t <= config['early_threshold'] else config['MAX_mask']
+        s[5] = max(0, s[5] - config['shut_rate'] * t) if s[3] else min(config['N_value0'], s[5] + 0.7 * config['shut_rate'] * t)
         if a == 0:
-            self.state[0] = (self.state[0] * config['N_total'] - config['N_donate']) / config['N_total']
+            s[0] = (s[0] * config['N_total'] - config['N_donate']) / config['N_total']
             # AIT
             if np.random.uniform() < 0.01:
-                self.state[5] += config['Up_mask']
+                s[5] += config['Up_mask']
             
             # Medical technology improvement
             if np.random.uniform() < 0.01:
@@ -127,41 +124,41 @@ class Environment:
                 self.gamma_detect += config['Up_detect']
 
             # update gamma_mask
-                self.update_gamma_mask()
+                self.update_gamma_mask(s)
         
         # modify transparency to 0.5
         elif a == 1:
-            self.state[1] = 0.5   
-            self.update_gamma_mask()
-            self.update_gamma_move(t)
+            s[1] = 0.5   
+            self.update_gamma_mask(s)
+            self.update_gamma_move(s, t)
         
         # modify transparency to 1.0
         elif a == 2:
-            self.state[1] = 1.0   
-            self.update_gamma_mask()
-            self.update_gamma_move(t)
+            s[1] = 1.0   
+            self.update_gamma_mask(s)
+            self.update_gamma_move(s, t)
         
         # decrease transparency 
         elif a == 3:
-            self.state[1] -= 0.1   
-            self.update_gamma_mask()
-            self.update_gamma_move(t)
+            s[1] -= 0.1   
+            self.update_gamma_mask(s)
+            self.update_gamma_move(s, t)
 
         # switch shutdown mode
         elif a == 4:
-            self.state[3] = int(not self.state[3])
+            s[3] = int(not s[3])
        
         # switch moving mode
         elif a == 5:
-            self.state[4] = int(not self.state[4])
-            self.state[5] = self.state[5] - config['Up_move'] if self.state[4] else self.state[5] + config['Up_move']
+            s[4] = int(not s[4])
+            s[5] = s[5] - config['Up_move'] if s[4] else s[5] + config['Up_move']
         
         """ update SEIR """
         beta = self.gamma_mask * config['beta0']
 
         SI = int(config['rI0'] * beta * self.I * self.S / config['N_total'])
         SE = int(self.gamma_shut * config['rE0'] * beta * self.E * self.S / config['N_total'])
-        SE_move = int(beta * self.S * self.gamma_move * config['P_move0'] * (1 - 0.85 * self.state[4]))
+        SE_move = int(beta * self.S * self.gamma_move * config['P_move0'] * (1 - 0.85 * s[4]))
         
         EI = int(config['alpha_ei0'] * self.E)
         EI_move = int(config['alpha_ei_move0'] * self.E_move)
@@ -184,12 +181,12 @@ class Environment:
         self.Q_move = self.Q_move + EQ_move - QI_move 
         self.I = self.I + EI + EI_move + QI + QI_move - IR
         self.R = self.R + IR
-        self.state[2] = self.Q + self.Q_move
+        s[2] = self.Q + self.Q_move
 
         """ update reward """
         reward = 5566
 
-        return self.state, reward, self.is_terminal
+        return s, reward, self.is_terminal
 
     def obeserved_state(self, state):
         """ To transform the global state to the obsevable state for agent.
@@ -203,17 +200,15 @@ class Environment:
         """
         return state[:5].clone()
     
-    def update_gamma_mask(self,):
-        self.gamma_mask = min((1 - 0.8 * self.state[1]) * config['MAX_mask'] / self.state[0], 1)
+    def update_gamma_mask(self, s):
+        self.gamma_mask = min((1 - 0.8 * s[1]) * config['MAX_mask'] / s[0], 1)
 
-    def update_gamma_move(self, t):
-        return (self.state[1] + 1) if t <= config['early_threshold'] else (self.state[6] - self.state[7] * self.state[1])
+    def update_gamma_move(self, s, t):
+        return (s[1] + 1) if t <= config['early_threshold'] else (s[6] - s[7] * s[1])
     
-
     @property
     def start(self):
         return self._start
-
 
 
 class Agent(nn.Module):
