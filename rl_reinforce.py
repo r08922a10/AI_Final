@@ -4,6 +4,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.distributions import Categorical
+import json
+import numpy as np
 
 with open('config.json') as f:
     data = f.read()
@@ -199,7 +201,7 @@ class Environment:
             observed_state : obsevable state for agent
 
         """
-        return state[:5]
+        return state[:5].clone()
     
     def update_gamma_mask(self,):
         self.gamma_mask = min((1 - 0.8 * self.state[1]) * config['MAX_mask'] / self.state[0], 1)
