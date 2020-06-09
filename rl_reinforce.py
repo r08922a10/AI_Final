@@ -69,7 +69,7 @@ class Environment:
         self.gamma_shut = config['gamma_shut0']
         self.is_terminal = False
 
-        return self.start
+        return self.start.clone()
 
    
     def step(self, s, a, t):
@@ -103,8 +103,6 @@ class Environment:
         """
         
         """ update state """
-        s = s.clone()
-        
         # recording tranparency bias and rate
         if t == config['early_threshold']:
             s[6] = (2 * s[1] + 1) / (s[1] + 1)
@@ -391,12 +389,12 @@ class Simulatoin:
 
 def main():
 
-    init_legal_actions = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    init_legal_actions = [0, 1, 2, 3, 4, 5, 6]
 
     args_agent = {
         "dim_input": 5, 
         "dim_output": 3,
-        "max_actions": 10,
+        "max_actions": 7,
         "init_legal_actions": init_legal_actions
     }
 
