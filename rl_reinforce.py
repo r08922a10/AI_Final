@@ -6,13 +6,12 @@ import torch.optim as optim
 from torch.distributions import Categorical
 import json
 import numpy as np
+from constant import *
 
-with open('config.json') as f:
-    data = f.read()
-config = json.loads(data)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")    
 
 class Environment:
+
     """A epidemic infection simulation model.
     Attributes
     ----------
@@ -37,13 +36,34 @@ class Environment:
         init_state: Prepare the environment for the starting state of a trial.
         step: Make a state transition.
         obeserved_state: To transform a global state to an obsevable state for agent.
-        update_gamma_mask: To update the value of gamma_mask
-        update_gamma_move: To update the value of gamma_move
+        update_gamma_mask: To update gamma_mask
+        update_gamma_move: To update gamma_move
         start(property): Return the starting starting state of a trial.
     """
     def __init__(self):
+
+        self._config = self._load_config()
+
         self._start = torch.zeros(8).to(device)
+
         self.is_terminal = False
+    
+    def _load_config(self):
+
+        """ Load the environment configuration.
+        Returns:
+            The dictionary of environment configuration.
+
+        """
+        try:
+
+            config = json.load(open('config.json'))
+
+        except:
+
+            raise Exception('Failed to load environment config from \'config.json\'')
+
+        return config
     
     def init_state(self):
         
@@ -52,49 +72,60 @@ class Environment:
             The starting state of the environment
 
         """
-        self.S, self.E, self.E_move, self.Q, self.Q_move, self.I, self.R = config['S0'], config['E0'], config['E0_move'], config['Q0'], config['Q0_move'], config['I0'], config['R0']
-        self._start[0] = config['N_mask0']
-        self._start[1] = config['N_transparency0']
-        self._start[2] = self.Q + self.Q_move
-        self._start[3] = 0
-        self._start[4] = 0
-        self._start[5] = config['N_value0']
-        self._start[6] = 0
-        self._start[7] = 0
+        # init SEIR model
+        self.S = self._config['S']
+        self.E = self._config['E']
+        self.E_move = self._config['E_move']
+        self.Q = self._config['Q']
+        self.Q_move = self._config['Q_move']
+        self.I = self._config['I']
+        self.R = self._config['R']
+
+        # init state
+        self._start[N_MASK] = self._config['N_mask']
+        self._start[N_OPEN] = self._config['N_open']
+        self._start[N_QUARANTINE] = 0
+        self._start[IF_SHUTDOWN] = 0
+        self._start[IF_MOVE_CONTROL] = 0
+        self._start[N_GOLD] = self._config['N_gold']
         
-        self.gamma_mask = config['gamma_mask0']
-        self.gamma_recover = config['gamma_recover0']
-        self.gamma_detect = config['gamma_detect0']
-        self.gamma_move = config['gamma_move0']
-        self.gamma_shut = config['gamma_shut0']
+        # init gamma
+        self.gamma_mask = self._config['gamma_mask']
+        self.gamma_recover = self._config['gamma_recover']
+        self.gamma_detect = self._config['gamma_detect']
+        self.gamma_move = self._config['gamma_move']
+        self.gamma_shut = self._config['gamma_shut']
+
+        # init terminal state
         self.is_terminal = False
 
-        return self.start.clone()
+        # init gamma move parameter
+        self.move_w = 0
+        self.move_b = 0
 
+        return self.start.clone()
    
     def step(self, s, a, t):
         """ We need to define this function as the transition function.(SEIR....)
 
         Args:
             s: current state
-                s[0]: number of masks
-                s[1]: number of transparency
-                s[2]: number of total quarantine
-                s[3]: 1: shutdown / 0: not shutdown
-                s[4]: 1: close moving / 0: open moving
-                s[5]: number of value       
-                s[6]: recording transparency bias
-                s[7]: recording transparency rate
+                0: N_MASK, number of masks
+                1: N_OPEN, number of openness
+                2: N_QUARANTINE, number of total quarantine
+                3: IF_SHUTDOWN, 1: shutdown / 0: not shutdown
+                4: IF_MOVE_CONTROL, 1: moving control / 0: moveing free
+                5: N_GOLDnumber of gold
 
             a: action taken by agent in current state
-                0: mask trade
-                1: transparency to 0.5 (current transparency should be smaller than 0.5)
-                2: transparency to 1.0 (current transparency should be smaller than 1.0)
-                3: dereasing transparency (transparency should not be 0)
-                4: switch shutdown mode
-                5: switch moving mode
-                6: no action
-            t: time(per day)
+                0: TRADE_MASK, Trade masks
+                1: SET_OPEN, set openness to 0.5 (current openness should be smaller than 0.5)
+                2: SET_OPEN2, set openness to 1.0 (current openness should be smaller than 1.0)
+                3: DEC_OPEN, decrease openness (openness should be larger than 0)
+                4: SWITCH_SHUTDOWN, switch shutdown mode
+                5: SWITCH_MOVE_CONTROL, switch moving mode
+                6: NO_ACTION, do nothing
+            t: timestep
 
         Returns:
             next_sate: The next state (aka  s' ) given by s and a .
@@ -103,83 +134,143 @@ class Environment:
         """
         
         """ update state """
-        # recording tranparency bias and rate
-        if t == config['early_threshold']:
-            s[6] = (2 * s[1] + 1) / (s[1] + 1)
-            s[7] = s[1] / (s[1] + 1)
-        
-        s[0] = (t * (config['MAX_mask'] - 0.1) / config['early_threshold'] + 0.1) if t <= config['early_threshold'] else config['MAX_mask']
-        s[5] = max(0, s[5] - config['shut_rate'] * t) if s[3] else min(config['N_value0'], s[5] + 0.7 * config['shut_rate'] * t)
-        if a == 0:
-            s[0] = (s[0] * config['N_total'] - config['N_donate']) / config['N_total']
-            # AIT
-            if np.random.uniform() < 0.01:
-                s[5] += config['Up_mask']
+        # record move weight and bias when timestep is at early threshold
+        if t == self._config['early_threshold']:
+
+            self.move_b = (2 * s[N_OPEN] + 1) / (s[N_OPEN] + 1)
+
+            self.move_w = s[N_OPEN] / (s[N_OPEN] + 1)
+
+        # update number of mask according to early threshold
+        if t <= self._config['early_threshold']:
+
+            s[N_MASK] = (t * (self._config['MAX_mask'] - 0.1) / self._config['early_threshold'] + 0.1)
+
+        else:
+
+            s[N_MASK] = self._config['MAX_mask']
+
+        # update number of gold by determining if it is shutdown
+        if s[IF_SHUTDOWN] == 1:
+
+            s[N_GOLD] = max(0, s[N_GOLD] - self._config['shut_rate'] * t)
+
+        else:
+
+            s[N_GOLD] = min(self._config['N_gold'], s[N_GOLD] + 0.7 * self._config['shut_rate'] * t)
+
+        # conduct action
+        if a == TRADE_MASK:
+
+            s[N_MASK] = (s[N_MASK] * self._config['N_total'] - self._config['N_donate']) / self._config['N_total']
             
-            # Medical technology improvement
+            # it would probably increase gold
             if np.random.uniform() < 0.01:
-                self.gamma_recover += config['Up_recover']
-                self.gamma_detect += config['Up_detect']
 
-            # update gamma_mask
-                self.update_gamma_mask(s)
-        
-        # modify transparency to 0.5
-        elif a == 1:
-            s[1] = 0.5   
-            self.update_gamma_mask(s)
-            self.update_gamma_move(s, t)
-        
-        # modify transparency to 1.0
-        elif a == 2:
-            s[1] = 1.0   
-            self.update_gamma_mask(s)
-            self.update_gamma_move(s, t)
-        
-        # decrease transparency 
-        elif a == 3:
-            s[1] -= 0.1   
-            self.update_gamma_mask(s)
-            self.update_gamma_move(s, t)
+                s[N_GOLD] += self._config['inc_mask']
+            
+            # it would probably gain medical technology improvement
+            if np.random.uniform() < 0.01:
 
-        # switch shutdown mode
-        elif a == 4:
-            s[3] = int(not s[3])
+                self.gamma_recover += self._config['inc_recover']
+
+                self.gamma_detect += self._config['inc_detect']
+        
+        elif a == SET_OPEN:
+
+            s[N_OPEN] = 0.5
+        
+        elif a == SET_OPEN2:
+
+            s[N_OPEN] = 1.0
+        
+        elif a == DEC_OPEN:
+
+            s[N_OPEN] -= 0.1
+
+        elif a == SWITCH_SHUTDOWN:
+
+            s[IF_SHUTDOWN] = 1 - s[IF_SHUTDOWN]
        
-        # switch moving mode
-        elif a == 5:
-            s[4] = int(not s[4])
-            s[5] = s[5] - config['Up_move'] if s[4] else s[5] + config['Up_move']
+        elif a == SWITCH_MOVE_CONTROL:
+
+            s[IF_MOVE_CONTROL] = 1 - s[IF_MOVE_CONTROL]
+
+            if s[IF_MOVE_CONTROL] == 1:
+
+                s[N_GOLD] -= self._config['inc_move']
+
+            else:
+
+                s[N_GOLD] += self._config['inc_move']
+        
+        s[N_QUARANTINE] = self.Q + self.Q_move
+
+        self.update_gamma_mask(s)
+
+        self.update_gamma_move(s, t)
         
         """ update SEIR """
-        beta = self.gamma_mask * config['beta0']
+        beta = self.gamma_mask * self._config['beta']
 
-        SI = int(config['rI0'] * beta * self.I * self.S / config['N_total'])
-        SE = int(self.gamma_shut * config['rE0'] * beta * self.E * self.S / config['N_total'])
-        SE_move = int(beta * self.S * self.gamma_move * config['P_move0'] * (1 - 0.85 * s[4]))
+        SI = int(self._config['rI'] * beta * self.I * self.S / self._config['N_total'])
+
+        SE = int(self.gamma_shut * self._config['rE'] * beta * self.E * self.S / self._config['N_total'])
         
-        EI = int(config['alpha_ei0'] * self.E)
-        EI_move = int(config['alpha_ei_move0'] * self.E_move)
-        EQ = int(self.E - np.random.binomial(self.E, max(0, 1 - self.gamma_detect * config['alpha_eq0']))) if (self.Q < config['MAX_Q']) else 0
-        if (self.Q + EQ) > config['MAX_Q']:
-            EQ  = config['MAX_Q'] - self.Q
-        EQ_move = int(self.E_move - np.random.binomial(self.E_move, max(0, 1 - self.gamma_detect * config['alpha_eq_move0']))) if (self.Q_move < config['MAX_Q_move']) else 0
-        if self.Q_move + EQ_move > config['MAX_Q_move']:
-            EQ_move = config['MAX_Q_move'] - self.Q_move
+        SE_move = int(beta * self.S * self.gamma_move * self._config['p_move'])
+
+        if s[IF_MOVE_CONTROL] == 1:
+
+            SE_move = 0.15 * SE_move
+
+        EI = int(self._config['alpha_ei'] * self.E)
+
+        EI_move = int(self._config['alpha_ei_move'] * self.E_move)
+
+        if self.Q < self._config['MAX_Q']:
+
+            EQ = np.random.binomial(self.E, self.gamma_detect * self._config['alpha_eq'])
+
+        else:
+
+            EQ = 0
+
+        if self.Q + EQ > self._config['MAX_Q']:
+
+            EQ  = self._config['MAX_Q'] - self.Q
+
+        if self.Q_move < self._config['MAX_Q_move']:
+
+            EQ_move = np.random.binomial(self.E_move, self.gamma_detect * self._config['alpha_eq_move'])
+
+        else:
+
+            EQ_move = 0
+
+        if self.Q_move + EQ_move > self._config['MAX_Q_move']:
+
+            EQ_move = self._config['MAX_Q_move'] - self.Q_move
         
-        QI = int(config['alpha_qi0'] * self.Q)
-        QI_move = int(config['alpha_qi_move0'] * self.Q_move)
+        QI = int(self._config['alpha_qi'] * self.Q)
+
+        QI_move = int(self._config['alpha_qi_move'] * self.Q_move)
         
-        IR = int(self.gamma_recover * config['alpha_ir0'] * self.I)
+        IR = int(self.gamma_recover * self._config['alpha_ir'] * self.I)
+
 
         self.S = self.S - SI - SE - SE_move
+
         self.E = self.E + SI + SE - EI - EQ
+
         self.E_move = self.E_move + SE_move - EI_move - EQ_move
-        self.Q = self.Q + EQ - QI 
-        self.Q_move = self.Q_move + EQ_move - QI_move 
+
+        self.Q = self.Q + EQ - QI
+
+        self.Q_move = self.Q_move + EQ_move - QI_move
+ 
         self.I = self.I + EI + EI_move + QI + QI_move - IR
+
         self.R = self.R + IR
-        s[2] = self.Q + self.Q_move
 
         """ update reward """
         reward = 5566
@@ -199,10 +290,31 @@ class Environment:
         return state[:5].clone()
     
     def update_gamma_mask(self, s):
-        self.gamma_mask = min((1 - 0.8 * s[1]) * config['MAX_mask'] / s[0], 1)
+        """ To update gamma_mask via openness and max of masks constant.
+
+        Args:
+            s : global state
+
+        """
+        self.gamma_mask = (1 - 0.8 * s[N_OPEN]) * self._config['MAX_mask'] / s[N_MASK]
+
+        self.gamma_mask = min(self.gamma_mask, 1)
 
     def update_gamma_move(self, s, t):
-        return (s[1] + 1) if t <= config['early_threshold'] else (s[6] - s[7] * s[1])
+        """ To update gamma_move in two different way according to timestep.
+
+        Args:
+            s : global state
+            t : timestep
+
+        """
+        if t <= self._config['early_threshold']:
+
+            self.gamma_move = s[N_OPEN] + 1
+
+        else:
+
+            self.gamma_move = self.move_b - self.move_w * s[N_OPEN]
     
     @property
     def start(self):
