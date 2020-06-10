@@ -2,7 +2,7 @@
     "beta": 0.01,
     "S": 23000000,
     "E": 6,
-    "E_move": 106,
+    "E_move": 0,
     "Q": 0,
     "Q_move": 0,
     "I": 6,
@@ -12,7 +12,7 @@
     "rI": 80,
 
     "alpha_ei": 0.05,
-    "alpha_ir": 0.05566,
+    "alpha_ir": 0.02,
     "alpha_eq": 0.9,
     "alpha_qi": 0.05566,
     "alpha_ei_move": 0.05566,
@@ -40,7 +40,7 @@
     "gamma_recover": 1,
     "gamma_detect": 1,
 
-    "p_move": 0.05566,
+    "p_move": 0,
     "early_threshold": 30,
     "shut_rate": 0.05566
 }

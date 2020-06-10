@@ -7,6 +7,10 @@ from torch.distributions import Categorical
 import json
 import numpy as np
 from constant import *
+import collections
+import matplotlib as mpl
+mpl.use('Agg')
+import matplotlib.pyplot as plt
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")    
 
@@ -17,6 +21,7 @@ class Environment:
     ----------
         is_terminal: 
         _start: 
+        _history: store all records including seir model or other states
                 
         S: number of susceptible
         E: number of exposed
@@ -47,6 +52,8 @@ class Environment:
         self._start = torch.zeros(8).to(device)
 
         self.is_terminal = False
+
+        self._history = collections.defaultdict(list)
     
     def _load_config(self):
 
@@ -102,6 +109,8 @@ class Environment:
         # init gamma move parameter
         self.move_w = 0
         self.move_b = 0
+
+        self._history = collections.defaultdict(list)
 
         return self.start.clone()
    
@@ -275,6 +284,8 @@ class Environment:
         """ update reward """
         reward = 5566
 
+        self.update_history(t)
+
         return s, reward, self.is_terminal
 
     def obeserved_state(self, state):
@@ -315,6 +326,70 @@ class Environment:
         else:
 
             self.gamma_move = self.move_b - self.move_w * s[N_OPEN]
+
+    def update_history(self, t, update_list=['S', 'E', 'E_move', 'Q', 'Q_move', 'I', 'R']):
+        """ To update history including seir model and other states.
+
+        Args:
+            s : global state
+            t : timestep
+
+        """
+
+        self._history['time'].append(t)
+
+        for name in update_list:
+
+            self._history[name].append(getattr(self, name))
+    
+    def plot_history(self, plot_list=['S', 'E', 'I', 'R'], out_path='history.png'):
+        """ To plot people transmission history line chart.
+
+        Args:
+            plot_list:  plot the attributes in this class.
+                        please make sure you have store the attributes in update_history
+            out_path: save figure to the path.
+
+        """
+        display_config = {
+            'S': ('Susceptible Population', 'blue'),
+            'E': ('Exposed Population', 'orange'),
+            'I': ('Infectious Population', 'green'),
+            'R': ('Recovered Population', 'red'),
+        }
+
+        if any(name not in display_config for name in plot_list):
+
+            raise Exception('Please check each element in plot list must be set in displaying config.')
+
+        fig = plt.figure(out_path)
+
+        history_fig = fig.add_subplot(111)
+
+        for name in plot_list:
+
+            history_fig.plot('time', 'number', '-', color=display_config[name][1], data={
+                'time': self._history['time'],
+                'number': self._history[name]})
+
+        # history_fig.legend(['Susceptible Population', 'Exposed Population', 'Infectious Population', 'Recovered Population'])
+        history_fig.legend([display_config[name][0] for name in plot_list], loc='center right')
+
+        history_fig.set_ylabel('population')
+
+        history_fig.set_xlabel('time')
+
+        history_fig.set_title('SEIR')
+
+        fig.savefig(out_path)
+
+    def print_state(self, t, print_list=['S', 'E', 'I', 'R']):
+
+        log = f'{t}\t'
+
+        log += '\t'.join([f'{name}: {getattr(self, name)}' for name in print_list])
+
+        print(log)
     
     @property
     def start(self):
@@ -466,7 +541,7 @@ class Simulatoin:
 
         self.optimizer.step()
 
-    def episodes(self, max_episodes=3, max_steps=10):
+    def episodes(self, max_episodes=3, max_steps=150):
 
         for episode in range(max_episodes):
 
@@ -498,6 +573,7 @@ class Simulatoin:
 
             self.agent.init_agent()
 
+            self.environment.plot_history(out_path=f'ep{episode:02d}_history.png')
 
 def main():
 
