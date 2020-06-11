@@ -36,6 +36,9 @@ class Environment:
         gamma_detect: the factor of mask trade to affect COVID detection
         gamma_move: the factor of moving to affect population of moving
         gamma_shut: the factor of shutdown to affect infectious degree
+
+        move_w: the weight to affect the factor of moving(gamma_move)
+        move_b: the bias to affect the factor of moving(gamma_move)
     Methods
     -------
         init_state: Prepare the environment for the starting state of a trial.
@@ -153,7 +156,7 @@ class Environment:
         # update number of mask according to early threshold
         if t <= self._config['early_threshold']:
 
-            s[N_MASK] = (t * (self._config['MAX_mask'] - 0.1) / self._config['early_threshold'] + 0.1)
+            s[N_MASK] = t * (self._config['MAX_mask'] - 0.1) / self._config['early_threshold'] + 0.1
 
         else:
 
@@ -183,7 +186,11 @@ class Environment:
 
                 self.gamma_recover += self._config['inc_recover']
 
+                self.gamma_recover = min(1, self.gamma_recover)
+                
                 self.gamma_detect += self._config['inc_detect']
+
+                self.gamma_detect = min(1, self.gamma_detect)
         
         elif a == SET_OPEN:
 
@@ -196,6 +203,8 @@ class Environment:
         elif a == DEC_OPEN:
 
             s[N_OPEN] -= 0.1
+            
+            s[N_OPEN] = max(0, s[N_OPEN]) # should be larger than 0
 
         elif a == SWITCH_SHUTDOWN:
 
@@ -223,14 +232,20 @@ class Environment:
         beta = self.gamma_mask * self._config['beta']
 
         SI = int(self._config['rI'] * beta * self.I * self.S / self._config['N_total'])
-
+        
+        SI = min(self.S, SI)
+        
         SE = int(self.gamma_shut * self._config['rE'] * beta * self.E * self.S / self._config['N_total'])
         
+        SE = min(self.S - SI, SE)
+
         SE_move = int(beta * self.S * self.gamma_move * self._config['p_move'])
 
         if s[IF_MOVE_CONTROL] == 1:
 
             SE_move = 0.15 * SE_move
+        
+        SE_move = min(self.S - SI - SE, SE_move)
 
         EI = int(self._config['alpha_ei'] * self.E)
 
@@ -240,25 +255,17 @@ class Environment:
 
             EQ = np.random.binomial(self.E, self.gamma_detect * self._config['alpha_eq'])
 
+            EQ_move = np.random.binomial(self.E_move, self.gamma_detect * self._config['alpha_eq_move'])
+
+            EQ_move = min(self._config['MAX_Q'] - self.Q, EQ_move)
+
+            EQ = min(self._config['MAX_Q'] - self.Q - EQ_move, EQ)
+
         else:
 
             EQ = 0
 
-        if self.Q + EQ > self._config['MAX_Q']:
-
-            EQ  = self._config['MAX_Q'] - self.Q
-
-        if self.Q_move < self._config['MAX_Q_move']:
-
-            EQ_move = np.random.binomial(self.E_move, self.gamma_detect * self._config['alpha_eq_move'])
-
-        else:
-
             EQ_move = 0
-
-        if self.Q_move + EQ_move > self._config['MAX_Q_move']:
-
-            EQ_move = self._config['MAX_Q_move'] - self.Q_move
         
         QI = int(self._config['alpha_qi'] * self.Q)
 
@@ -327,6 +334,8 @@ class Environment:
 
             self.gamma_move = self.move_b - self.move_w * s[N_OPEN]
 
+            self.gamma_move = max(0, self.gamma_move)
+
     def update_history(self, t, update_list=['S', 'E', 'E_move', 'Q', 'Q_move', 'I', 'R']):
         """ To update history including seir model and other states.
 
@@ -342,7 +351,7 @@ class Environment:
 
             self._history[name].append(getattr(self, name))
     
-    def plot_history(self, plot_list=['S', 'E', 'I', 'R'], out_path='history.png'):
+    def plot_history(self, plot_list=['S', 'E', 'Q', 'I', 'R'], out_path='history.png'):
         """ To plot people transmission history line chart.
 
         Args:
@@ -354,8 +363,11 @@ class Environment:
         display_config = {
             'S': ('Susceptible Population', 'blue'),
             'E': ('Exposed Population', 'orange'),
+            'Q': ('Quarantine Population', 'cyan'),
             'I': ('Infectious Population', 'green'),
             'R': ('Recovered Population', 'red'),
+            'E_move': ('Exposed Population(move)', 'magenta'),
+            'Q_move': ('Quarantine Population(move)', 'black'),
         }
 
         if any(name not in display_config for name in plot_list):
@@ -383,7 +395,7 @@ class Environment:
 
         fig.savefig(out_path)
 
-    def print_state(self, t, print_list=['S', 'E', 'I', 'R']):
+    def print_state(self, t, print_list=['S', 'E', 'E_move', 'Q', 'Q_move', 'I', 'R']):
 
         log = f'{t}\t'
 
