@@ -1,15 +1,15 @@
 {
-    "beta": 0.01,
+    "beta": 0.05,
     "S": 23000000,
-    "E": 6,
+    "E": 0,
     "E_move": 0,
     "Q": 0,
     "Q_move": 0,
-    "I": 6,
+    "I": 1,
     "R": 0,
 
-    "rE": 80,
-    "rI": 80,
+    "rE": 30,
+    "rI": 20,
 
     "alpha_ei": 0.05,
     "alpha_ir": 0.02,
@@ -31,8 +31,7 @@
     "N_open": 0.2,
 
     "MAX_mask": 0.6429,
-    "MAX_Q": 5566,
-    "MAX_Q_move": 5566,
+    "MAX_Q": 50000,
 
     "gamma_mask": 1,
     "gamma_move": 1,
