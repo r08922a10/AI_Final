@@ -500,19 +500,19 @@ class Agent(nn.Module):
     
     def get_legal_actions(self, state):
 
-        if state[N_OPEN] <= 0.5 and SET_OPEN in self.legal_actions:
+        if state[N_OPEN] >= 0.5 and SET_OPEN in self.legal_actions:
 
             self.legal_actions.remove(SET_OPEN)
 
-        elif state[N_OPEN] > 0.5 and SET_OPEN not in self.legal_actions:
+        elif state[N_OPEN] < 0.5 and SET_OPEN not in self.legal_actions:
 
             self.legal_actions.append(SET_OPEN)
 
-        if state[N_OPEN] <= 1 and SET_OPEN2 in self.legal_actions:
+        if state[N_OPEN] >= 1 and SET_OPEN2 in self.legal_actions:
 
             self.legal_actions.remove(SET_OPEN2)
 
-        elif state[N_OPEN] > 1 and SET_OPEN2 not in self.legal_actions:
+        elif state[N_OPEN] < 1 and SET_OPEN2 not in self.legal_actions:
 
             self.legal_actions.append(SET_OPEN2)
 
