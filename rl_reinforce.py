@@ -154,8 +154,12 @@ class Environment:
             self.move_w = s[N_OPEN] / (s[N_OPEN] + 1)
 
         # update number of mask according to early threshold
-        s[N_MASK] = min(s[N_MASK] + (self._config['MAX_mask'] - 0.1) / self._config['early_threshold'], self._config['MAX_mask'])
+        s[N_MASK] += (self._config['MAX_mask'] - 0.1) / self._config['early_threshold']
+        
+        if s[N_MASK] > self._config['MAX_mask']:
             
+            s[N_MASK] = self._config['MAX_mask']
+
         # update number of gold by determining if it is shutdown
         if s[IF_SHUTDOWN] == 1:
 
@@ -245,15 +249,15 @@ class Environment:
 
         EI_move = int(self._config['alpha_ei_move'] * self.E_move)
 
-        if (self.Q + self.Q_move) < self._config['MAX_Q']:
-
+        if s[N_QUARANTINE].item() < self._config['MAX_Q']:
+            
             EQ = np.random.binomial(self.E, min(0.95, self.gamma_detect * self._config['alpha_eq']))
 
             EQ_move = np.random.binomial(self.E_move, min(0.95, self.gamma_detect * self._config['alpha_eq_move']))
             
-            EQ_move = min(self._config['MAX_Q'] - self.Q - self.Q_move, EQ_move)
+            EQ_move = min(self._config['MAX_Q'] - s[N_QUARANTINE].item(), EQ_move)
      
-            EQ = min(self._config['MAX_Q'] - self.Q - self.Q_move - EQ_move, EQ)
+            EQ = min(self._config['MAX_Q'] - s[N_QUARANTINE].item() - EQ_move, EQ)
                
         else:
 
@@ -551,7 +555,7 @@ class Simulatoin:
 
         self.optimizer.step()
 
-    def episodes(self, max_episodes=3, max_steps=300):
+    def episodes(self, max_episodes=3, max_steps=300, plot=False):
 
         for episode in range(max_episodes):
 
