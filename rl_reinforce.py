@@ -346,7 +346,7 @@ class Environment:
 
             inc_list = ['inc_mask', 'inc_recover', 'inc_detect', 'inc_move']
 
-            gamma_list = ['gamma_mask', 'gamma_move', 'gamma_shut', 'gamma_recover', 'gamma_detect']
+            gamma_list = ['gamma_mask', 'gamma_move', 'gamma_shut', 'gamma_recover', 'gamma_detect', 'gamma_detect_move']
 
             constant_list = ['N_mask', 'N_gold', 'N_open', 'MAX_mask', 'MAX_Q', 'early_threshold']
 
