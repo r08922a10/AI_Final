@@ -655,14 +655,31 @@ class GRUAgent(Agent):
         super().__init__(dim_input, dim_output, max_actions, init_legal_actions, cooldown_criteria)
 
         self.gru = nn.GRU(dim_input, dim_input, batch_first=True)
-    
+
+        self.memory = None
+
+    def init_agent(self):
+
+        self.legal_actions = self.init_legal_actions.copy()
+
+        self.log_probs = []
+
+        self.rewards = []
+        
+        self.current_cooldown = {}
+
+        for act in self.cooldown_criteria.keys():
+            self.current_cooldown[act] = 0
+
+        self.memory = None
+
     def forward(self, state):
 
         self.get_legal_actions(state)
 
-        _, last_h = self.gru(state.view(1,1,-1))
+        _, self.memory = self.gru(state.view(1,1,-1), self.memory)
 
-        state_vector = self.net(last_h.view(-1))
+        state_vector = self.net(self.memory.view(-1))
 
         actions = torch.tensor(self.legal_actions, device=device)
 
