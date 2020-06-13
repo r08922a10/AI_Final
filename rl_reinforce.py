@@ -301,6 +301,10 @@ class Environment:
 
         self.update_history(t)
 
+        if self.R / self._config['N_total'] > 0.92:
+
+            self.is_terminal = True
+
         return s, reward, self.is_terminal
 
     def obeserved_state(self, state):
@@ -418,40 +422,29 @@ class Environment:
 
 class Agent(nn.Module):
     """ The decision-making policy network for the simulation.
-
     Attributes
     ----------
-        init_legal_actions:
-
-        legal_actions:
-
-        log_probs:
-
-        rewards:
-
-        action_embeddings:
-
-        net:
-
+        init_legal_actions: make all actions legal
+        legal_actions: legal actions in current state
+        log_probs: the log(probability) at every time step
+        rewards: RL rewards
+        action_embeddings: the transform of the actions
+        net: policy network
     Methods
     -------
         init_agent: reset the history fo the log probability and rewards
-
         forward: the inference of the policy network
-
         select_actions: return the action sampled from the policy nwetwork
-
+        get_legal_actions: update the legal_actions at current state
     """
     def __init__(self, dim_input, dim_output, max_actions, init_legal_actions):
         """ Initialize the parameters of the policynwtwork
-
         Args
         ----
             dim_input:
             dim_output:
             max_actions:
             init_legal_actions:
-
         """
 
         super(Agent, self).__init__()
@@ -482,6 +475,8 @@ class Agent(nn.Module):
 
     def forward(self, state):
 
+        self.get_legal_actions(state)
+
         state_vector = self.net(state)
 
         actions = torch.tensor(self.legal_actions, device=device)
@@ -500,23 +495,48 @@ class Agent(nn.Module):
 
         self.log_probs.append(distribution.log_prob(action))
         
-        return action.item()
+        return self.legal_actions[action.item()]
+    
+    def get_legal_actions(self, state):
+
+        if state[N_OPEN] >= 0.5 and SET_OPEN in self.legal_actions:
+
+            self.legal_actions.remove(SET_OPEN)
+
+        elif state[N_OPEN] < 0.5 and SET_OPEN not in self.legal_actions:
+
+            self.legal_actions.append(SET_OPEN)
+
+        if state[N_OPEN] >= 1 and SET_OPEN2 in self.legal_actions:
+
+            self.legal_actions.remove(SET_OPEN2)
+
+        elif state[N_OPEN] < 1 and SET_OPEN2 not in self.legal_actions:
+
+            self.legal_actions.append(SET_OPEN2)
+
+        if state[N_OPEN] == 0 and DEC_OPEN in self.legal_actions:
+
+            self.legal_actions.remove(DEC_OPEN)
+
+        elif state[N_OPEN] > 0 and DEC_OPEN not in self.legal_actions:
+
+            self.legal_actions.append(DEC_OPEN)
+
+   
 
 
 class Simulatoin:
     """ The interaction between environment(epidemic infection model) and agent(policy network)
-
     Attributes
     ----------
         agent
         enviroment
         gamma
         optimizer
-
     Methods
     -------
         policy_gradient_update:
-
         episodes:
     """
 
@@ -561,7 +581,7 @@ class Simulatoin:
 
         self.optimizer.step()
 
-    def episodes(self, max_episodes=3, max_steps=300, plot=False):
+    def episodes(self, max_episodes=5, max_steps=10000, plot=False):
 
         for episode in range(max_episodes):
 
@@ -576,9 +596,9 @@ class Simulatoin:
                 actions_probs = self.agent.forward(state_observed)
 
                 action = self.agent.select_actions(actions_probs)
-               
+
                 state, reward, is_terminal = self.environment.step(state, action, t=t)
-               
+
                 state_observed = self.environment.obeserved_state(state)
 
                 self.agent.rewards.append(reward)
@@ -593,7 +613,9 @@ class Simulatoin:
 
             self.agent.init_agent()
 
-            self.environment.plot_history(out_path=f'ep{episode:02d}_history.png')
+            if plot:
+
+                self.environment.plot_history(out_path=f'ep{episode:02d}_history.png')
 
 def main():
 
@@ -612,7 +634,7 @@ def main():
 
     game = Simulatoin(agent, env, optim.Adam(agent.parameters(), lr=1e-3))
 
-    game.episodes()
+    game.episodes(plot=True)
 
 
 if __name__ == "__main__":
