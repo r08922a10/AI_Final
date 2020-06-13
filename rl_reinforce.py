@@ -115,6 +115,8 @@ class Environment:
 
         self._history = collections.defaultdict(list)
 
+        self._assert_all(if_config=True, if_seir=True)
+
         return self.start.clone()
    
     def step(self, s, a, t):
@@ -146,6 +148,8 @@ class Environment:
         """
         
         """ update state """
+        self._assert_all(s=s, if_seir=True)
+
         # record move weight and bias when timestep is at early threshold
         if t == self._config['early_threshold']:
 
@@ -190,7 +194,7 @@ class Environment:
 
                 self.gamma_recover += self._config['inc_recover']
 
-                self.gamma_recover = min(0.95 / self._config['inc_recover'], self.gamma_recover)
+                self.gamma_recover = min(0.95 / self._config['alpha_ir'], self.gamma_recover)
   
                 self.gamma_detect += self._config['inc_detect']
 
@@ -253,9 +257,9 @@ class Environment:
 
         if s[N_QUARANTINE].item() < self._config['MAX_Q']:
             
-            EQ = np.random.binomial(self.E, min(0.95, self.gamma_detect * self._config['alpha_eq']))
+            EQ = np.random.binomial(self.E - EI, min(0.95, self.gamma_detect * self._config['alpha_eq']))
 
-            EQ_move = np.random.binomial(self.E_move, min(0.95, self.gamma_detect * self._config['alpha_eq_move']))
+            EQ_move = np.random.binomial(self.E_move - EI_move, min(0.95, self.gamma_detect * self._config['alpha_eq_move']))
             
             EQ_move = min(self._config['MAX_Q'] - s[N_QUARANTINE].item(), EQ_move)
      
@@ -271,7 +275,7 @@ class Environment:
 
         QI_move = int(self._config['alpha_qi_move'] * self.Q_move)
         
-        IR = int(min(0.95, self.gamma_recover * self._config['alpha_ir']) * self.I)
+        IR = int(self.gamma_recover * self._config['alpha_ir'] * self.I)
 
         self.S = self.S - SI - SE - SE_move
 
@@ -302,7 +306,88 @@ class Environment:
 
             self.is_terminal = True
 
+        
+        self._assert_all(s=s, if_seir=True, if_variable=True)
+
         return s, reward, self.is_terminal
+
+
+    def _assert_all(self, s=None, if_config=False, if_variable=False, if_seir=False, if_all=False):
+        """ To assert that all values in environment are reasonable.
+
+        Args:
+            s: the state you want to assert values. Note that only required when if_variable is True.
+            if_config: if True assert all configs in initialization file are reasonable. 
+            if_variable: if True, assert all variables are reasonable when the env updates.
+            if_seir: if True, assert all seir components are reasonable when the env updates.
+        """
+        if if_config or if_all:
+
+            rule1 = lambda x: 0 <= x <= 1
+
+            alpha_list = ['alpha_ei', 'alpha_ir', 'alpha_eq', 'alpha_qi',\
+                        'alpha_ei_move', 'alpha_ir_move', 'alpha_eq_move', 'alpha_qi_move']
+
+            other_list = ['beta', 'p_move', 'shut_rate']
+
+            for name in alpha_list + other_list:
+
+                assert rule1(self._config[name])
+
+            rule2 = lambda x: 0 <= x
+
+            inc_list = ['inc_mask', 'inc_recover', 'inc_detect', 'inc_move']
+
+            gamma_list = ['gamma_mask', 'gamma_move', 'gamma_shut', 'gamma_recover', 'gamma_detect']
+
+            constant_list = ['N_mask', 'N_gold', 'N_open', 'MAX_mask', 'MAX_Q', 'early_threshold']
+
+            for name in inc_list + gamma_list + constant_list:
+
+                assert rule2(self._config[name])
+
+            rule3 = lambda x: 1 <= x
+
+            for name in ['rE', 'rI', 'N_total', 'N_donate']:
+
+                assert rule3(self._config[name])
+        
+        if if_variable or if_all:
+
+            assert s is not None
+
+            assert s[N_MASK] <= self._config['MAX_mask']
+
+            assert 0 <= s[N_OPEN] <= 1
+
+            assert 0 <= s[N_QUARANTINE] <= self._config['MAX_Q']
+
+            assert s[IF_SHUTDOWN] in (0, 1)
+           
+            assert s[IF_MOVE_CONTROL] in (0, 1)
+
+            # assert 0 <= s[N_GOLD] TODO  
+            
+            assert 0 <= self.move_w <= 1
+
+            assert 0 <= self.move_b
+            
+            assert 0 <= self.gamma_shut <= 1# TODO
+
+            assert 0 <= self.gamma_recover * self._config['alpha_ir'] <= 1 # TODO
+
+            assert 0 <= self.gamma_detect * min(self._config['alpha_eq'], self._config['alpha_eq_move']) <= 1 # TODO
+
+        if if_seir or if_all:
+
+            pop_rule = lambda x: 0 <= x <= self._config['N_total']
+
+            for name in ['S', 'E', 'E_move', 'Q', 'Q_move', 'I', 'R']:
+
+                assert pop_rule(getattr(self, name))
+
+            assert 0 <= self.Q + self.Q_move < self._config['MAX_Q']
+
 
     def obeserved_state(self, state):
         """ To transform the global state to the obsevable state for agent.
@@ -431,21 +516,25 @@ class Agent(nn.Module):
         rewards: RL rewards
         action_embeddings: the transform of the actions
         net: policy network
+        cooldown_criteria: CD criteria of the actions. This should be pre-defined when creating an Agent object
+        current_cooldown: CD time at current time step. This should be initialized to all zero value
     Methods
     -------
         init_agent: reset the history fo the log probability and rewards
         forward: the inference of the policy network
         select_actions: return the action sampled from the policy nwetwork
         get_legal_actions: update the legal_actions at current state
+        update_cooldown : update the cooldown time every time step
     """
-    def __init__(self, dim_input, dim_output, max_actions, init_legal_actions):
+    def __init__(self, dim_input, dim_output, max_actions, init_legal_actions, cooldown_criteria):
         """ Initialize the parameters of the policynwtwork
         Args
         ----
-            dim_input:
-            dim_output:
-            max_actions:
-            init_legal_actions:
+            dim_input: the size of the observed state
+            dim_output: the size of the state encoding output
+            max_actions: len(init_legal_actions)
+            init_legal_actions: make all actions legal
+            cooldown_criteria: CD criteria of the actions
         """
 
         super(Agent, self).__init__()
@@ -466,6 +555,10 @@ class Agent(nn.Module):
             nn.Linear(8, dim_output)
         )
 
+        self.cooldown_criteria = cooldown_criteria
+
+        self.current_cooldown = None
+
     def init_agent(self):
 
         self.legal_actions = self.init_legal_actions.copy()
@@ -473,6 +566,12 @@ class Agent(nn.Module):
         self.log_probs = []
 
         self.rewards = []
+        
+        self.current_cooldown = {}
+
+        for act in self.cooldown_criteria.keys():
+            self.current_cooldown[act] = 0
+          
 
     def forward(self, state):
 
@@ -490,13 +589,17 @@ class Agent(nn.Module):
 
     def select_actions(self, scores):
 
-        distribution = Categorical(scores)
+        distribution = Categorical(scores.view(-1, ))
 
         action = distribution.sample()
 
         self.log_probs.append(distribution.log_prob(action))
-        
-        return self.legal_actions[action.item()]
+
+        action_id = self.legal_actions[action.item()]
+
+        self.update_cooldown(action_id)
+
+        return action_id
     
     def get_legal_actions(self, state):
 
@@ -524,7 +627,70 @@ class Agent(nn.Module):
 
             self.legal_actions.append(DEC_OPEN)
 
-   
+        for act, cd in self.current_cooldown.items():
+
+            if cd > 0 and act in self.legal_actions:
+
+                self.legal_actions.remove(act)
+
+            elif cd == 0 and act not in self.legal_actions:
+
+                self.legal_actions.append(act)
+
+
+    def update_cooldown(self, action_id):
+
+        for act, cd in self.current_cooldown.items():
+
+            if action_id != act:
+
+                self.current_cooldown[act] = max(0, cd-1)
+            
+            else:
+
+                self.current_cooldown[action_id] = self.cooldown_criteria[action_id]
+
+class GRUAgent(Agent):
+
+    def __init__(self, dim_input, dim_output, max_actions, init_legal_actions, cooldown_criteria):
+
+        super().__init__(dim_input, dim_output, max_actions, init_legal_actions, cooldown_criteria)
+
+        self.gru = nn.GRU(dim_input, dim_input, batch_first=True)
+
+        self.memory = None
+
+    def init_agent(self):
+
+        self.legal_actions = self.init_legal_actions.copy()
+
+        self.log_probs = []
+
+        self.rewards = []
+        
+        self.current_cooldown = {}
+
+        for act in self.cooldown_criteria.keys():
+            self.current_cooldown[act] = 0
+
+        self.memory = None
+
+    def forward(self, state):
+
+        self.get_legal_actions(state)
+
+        _, self.memory = self.gru(state.view(1,1,-1), self.memory)
+
+        state_vector = self.net(self.memory.view(-1))
+
+        actions = torch.tensor(self.legal_actions, device=device)
+
+        actions_vectors = self.action_embeddings(actions)
+
+        scores = torch.matmul(actions_vectors, state_vector.unsqueeze(1)).squeeze()
+
+        return F.softmax(scores, dim=0)
+
 
 
 class Simulatoin:
@@ -586,6 +752,8 @@ class Simulatoin:
 
         for episode in range(max_episodes):
 
+            self.agent.init_agent()
+
             state = self.environment.init_state()
 
             state_observed = self.environment.obeserved_state(state)
@@ -612,24 +780,31 @@ class Simulatoin:
 
             self.policy_gradient_update()
 
-            self.agent.init_agent()
-
             if plot:
 
                 self.environment.plot_history(out_path=f'ep{episode:02d}_history.png')
 
 def main():
 
-    init_legal_actions = [0, 1, 2, 3, 4, 5, 6]
+    init_legal_actions = [TRADE_MASK, SET_OPEN, SET_OPEN2, DEC_OPEN, SWITCH_SHUTDOWN, SWITCH_MOVE_CONTROL, NO_ACTION]
+
+    cooldown_criteria = {TRADE_MASK: 7,
+                           SET_OPEN: 3,
+                          SET_OPEN2: 3,
+                           DEC_OPEN: 3,
+                    SWITCH_SHUTDOWN: 30,
+                SWITCH_MOVE_CONTROL: 30}
 
     args_agent = {
         "dim_input": 7, 
         "dim_output": 3,
         "max_actions": 7,
-        "init_legal_actions": init_legal_actions
+        "init_legal_actions": init_legal_actions,
+        "cooldown_criteria": cooldown_criteria
     }
 
-    agent = Agent(**args_agent).to(device)
+    #agent = Agent(**args_agent).to(device)
+    agent = GRUAgent(**args_agent).to(device)
 
     env = Environment()
 
