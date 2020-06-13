@@ -34,6 +34,7 @@ class Environment:
         gamma_mask: the factor of masks to affect transmission rate
         gamma_recover: the factor of mask trade to affect recover rate
         gamma_detect: the factor of mask trade to affect COVID detection
+        gamma_detect_move: the factor of mask trade to affect COVID detection(move)
         gamma_move: the factor of moving to affect population of moving
         gamma_shut: the factor of shutdown to affect infectious degree
 
@@ -103,6 +104,7 @@ class Environment:
         self.gamma_mask = self._config['gamma_mask']
         self.gamma_recover = self._config['gamma_recover']
         self.gamma_detect = self._config['gamma_detect']
+        self.gamma_detect_move = self._config['gamma_detect']
         self.gamma_move = self._config['gamma_move']
         self.gamma_shut = self._config['gamma_shut']
 
@@ -198,6 +200,12 @@ class Environment:
   
                 self.gamma_detect += self._config['inc_detect']
 
+                self.gamma_detect = min(0.95 / self._config['alpha_eq'], self.gamma_detect)
+
+                self.gamma_detect_move += self._config['inc_detect']
+
+                self.gamma_detect_move = min(0.95 / self._config['alpha_eq_move'], self.gamma_detect_move)
+
         elif a == SET_OPEN:
 
             s[N_OPEN] = 0.5
@@ -257,9 +265,9 @@ class Environment:
 
         if s[N_QUARANTINE].item() < self._config['MAX_Q']:
             
-            EQ = np.random.binomial(self.E - EI, min(0.95, self.gamma_detect * self._config['alpha_eq']))
+            EQ = np.random.binomial(self.E - EI, self.gamma_detect * self._config['alpha_eq'])
 
-            EQ_move = np.random.binomial(self.E_move - EI_move, min(0.95, self.gamma_detect * self._config['alpha_eq_move']))
+            EQ_move = np.random.binomial(self.E_move - EI_move, self.gamma_detect_move * self._config['alpha_eq_move'])
             
             EQ_move = min(self._config['MAX_Q'] - s[N_QUARANTINE].item(), EQ_move)
      
@@ -372,11 +380,13 @@ class Environment:
 
             assert 0 <= self.move_b
             
-            assert 0 <= self.gamma_shut <= 1# TODO
+            assert 0 <= self.gamma_shut <= 1 # TODO
 
             assert 0 <= self.gamma_recover * self._config['alpha_ir'] <= 1 # TODO
 
-            assert 0 <= self.gamma_detect * min(self._config['alpha_eq'], self._config['alpha_eq_move']) <= 1 # TODO
+            assert 0 <= self.gamma_detect * self._config['alpha_eq'] <= 1 # TODO
+
+            assert 0 <= self.gamma_detect_move * self._config['alpha_eq_move'] <= 1 # TODO
 
         if if_seir or if_all:
 
