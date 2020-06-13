@@ -555,7 +555,7 @@ class Agent(nn.Module):
 
         self.cooldown_criteria = cooldown_criteria
 
-        self.current_cooldown = {}
+        self.current_cooldown = None
 
     def init_agent(self):
 
@@ -571,6 +571,12 @@ class Agent(nn.Module):
                                    DEC_OPEN: 0,
                             SWITCH_SHUTDOWN: 0,
                         SWITCH_MOVE_CONTROL: 0 }
+        
+        self.current_cooldown = {}
+
+        for act in self.cooldown_criteria.keys():
+            self.current_cooldown[act] = 0
+          
 
     def forward(self, state):
 
@@ -734,6 +740,8 @@ class Simulatoin:
 
         for episode in range(max_episodes):
 
+            self.agent.init_agent()
+
             state = self.environment.init_state()
 
             state_observed = self.environment.obeserved_state(state)
@@ -759,8 +767,6 @@ class Simulatoin:
                     break
 
             self.policy_gradient_update()
-
-            self.agent.init_agent()
 
             if plot:
 
