@@ -38,6 +38,7 @@
     "gamma_shut": 1,
     "gamma_recover": 1,
     "gamma_detect": 1,
+    "gamma_detect_move": 1,
 
     "p_move": 0.01,
     "early_threshold": 30,
