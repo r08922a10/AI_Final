@@ -564,13 +564,6 @@ class Agent(nn.Module):
         self.log_probs = []
 
         self.rewards = []
-
-        self.current_cooldown = {TRADE_MASK: 0,
-                                   SET_OPEN: 0,
-                                  SET_OPEN2: 0,
-                                   DEC_OPEN: 0,
-                            SWITCH_SHUTDOWN: 0,
-                        SWITCH_MOVE_CONTROL: 0 }
         
         self.current_cooldown = {}
 
