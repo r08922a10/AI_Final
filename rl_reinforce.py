@@ -786,7 +786,6 @@ def main():
     }
 
     #agent = Agent(**args_agent).to(device)
-
     agent = GRUAgent(**args_agent).to(device)
 
     env = Environment()
