@@ -34,6 +34,7 @@ class Environment:
         gamma_mask: the factor of masks to affect transmission rate
         gamma_recover: the factor of mask trade to affect recover rate
         gamma_detect: the factor of mask trade to affect COVID detection
+        gamma_detect_move: the factor of mask trade to affect COVID detection(move)
         gamma_move: the factor of moving to affect population of moving
         gamma_shut: the factor of shutdown to affect infectious degree
 
@@ -103,6 +104,7 @@ class Environment:
         self.gamma_mask = self._config['gamma_mask']
         self.gamma_recover = self._config['gamma_recover']
         self.gamma_detect = self._config['gamma_detect']
+        self.gamma_detect_move = self._config['gamma_detect']
         self.gamma_move = self._config['gamma_move']
         self.gamma_shut = self._config['gamma_shut']
 
@@ -198,8 +200,12 @@ class Environment:
   
                 self.gamma_detect += self._config['inc_detect']
 
-                self.gamma_detect = min(0.95 /  self._config['alpha_eq'], self.gamma_detect)
- 
+                self.gamma_detect = min(0.95 / self._config['alpha_eq'], self.gamma_detect)
+
+                self.gamma_detect_move += self._config['inc_detect']
+
+                self.gamma_detect_move = min(0.95 / self._config['alpha_eq_move'], self.gamma_detect_move)
+
         elif a == SET_OPEN:
 
             s[N_OPEN] = 0.5
@@ -261,7 +267,7 @@ class Environment:
             
             EQ = np.random.binomial(self.E - EI, self.gamma_detect * self._config['alpha_eq'])
 
-            EQ_move = np.random.binomial(self.E_move - EI_move, self.gamma_detect * self._config['alpha_eq_move'])
+            EQ_move = np.random.binomial(self.E_move - EI_move, self.gamma_detect_move * self._config['alpha_eq_move'])
             
             EQ_move = min(self._config['MAX_Q'] - s[N_QUARANTINE].item(), EQ_move)
      
@@ -303,8 +309,8 @@ class Environment:
            reward -= 0.01
 
         self.update_history(t)
-
-        if self.R / self._config['N_total'] > 0.92:
+        
+        if self.R / self._config['N_total'] > 0.95:
 
             self.is_terminal = True
 
@@ -340,7 +346,7 @@ class Environment:
 
             inc_list = ['inc_mask', 'inc_recover', 'inc_detect', 'inc_move']
 
-            gamma_list = ['gamma_mask', 'gamma_move', 'gamma_shut', 'gamma_recover', 'gamma_detect']
+            gamma_list = ['gamma_mask', 'gamma_move', 'gamma_shut', 'gamma_recover', 'gamma_detect', 'gamma_detect_move']
 
             constant_list = ['N_mask', 'N_gold', 'N_open', 'MAX_mask', 'MAX_Q', 'early_threshold']
 
@@ -368,17 +374,19 @@ class Environment:
            
             assert s[IF_MOVE_CONTROL] in (0, 1)
 
-            # assert 0 <= s[N_GOLD] TODO 
+            # assert 0 <= s[N_GOLD] TODO  
             
             assert 0 <= self.move_w <= 1
 
             assert 0 <= self.move_b
             
-            assert 0 <= self.gamma_shut # TODO
+            assert 0 <= self.gamma_shut <= 1 # TODO
 
-            assert 0 <= self.gamma_recover # TODO
+            assert 0 <= self.gamma_recover * self._config['alpha_ir'] <= 1 # TODO
 
-            assert 0 <= self.gamma_detect # TODO
+            assert 0 <= self.gamma_detect * self._config['alpha_eq'] <= 1 # TODO
+
+            assert 0 <= self.gamma_detect_move * self._config['alpha_eq_move'] <= 1 # TODO
 
         if if_seir or if_all:
 
@@ -396,12 +404,16 @@ class Environment:
 
         Args:
             state : global state
-
+     
         Returns:
             observed_state : obsevable state for agent
 
         """
-        return state[:5].clone()
+        observed_state = torch.zeros(7).to(device)
+        observed_state[:5] = state[:5].clone()
+        observed_state[5] = self.I
+        observed_state[6] = self.R
+        return observed_state
     
     def update_gamma_mask(self, s):
         """ To update gamma_mask via openness and max of masks constant.
@@ -746,7 +758,7 @@ class Simulatoin:
 
         self.optimizer.step()
 
-    def episodes(self, max_episodes=5, max_steps=100, plot=False):
+    def episodes(self, max_episodes=5, max_steps=400, plot=False):
 
         for episode in range(max_episodes):
 
@@ -763,7 +775,7 @@ class Simulatoin:
                 actions_probs = self.agent.forward(state_observed)
 
                 action = self.agent.select_actions(actions_probs)
-
+               
                 state, reward, is_terminal = self.environment.step(state, action, t=t)
 
                 state_observed = self.environment.obeserved_state(state)
@@ -794,7 +806,7 @@ def main():
                 SWITCH_MOVE_CONTROL: 30}
 
     args_agent = {
-        "dim_input": 5, 
+        "dim_input": 7, 
         "dim_output": 3,
         "max_actions": 7,
         "init_legal_actions": init_legal_actions,
