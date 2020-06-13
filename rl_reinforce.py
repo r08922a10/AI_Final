@@ -430,21 +430,25 @@ class Agent(nn.Module):
         rewards: RL rewards
         action_embeddings: the transform of the actions
         net: policy network
+        cooldown_criteria: CD criteria of the actions. This should be pre-defined when creating an Agent object
+        current_cooldown: CD time at current time step. This should be initialized to all zero value
     Methods
     -------
         init_agent: reset the history fo the log probability and rewards
         forward: the inference of the policy network
         select_actions: return the action sampled from the policy nwetwork
         get_legal_actions: update the legal_actions at current state
+        update_cooldown : update the cooldown time every time step
     """
-    def __init__(self, dim_input, dim_output, max_actions, init_legal_actions):
+    def __init__(self, dim_input, dim_output, max_actions, init_legal_actions, cooldown_criteria):
         """ Initialize the parameters of the policynwtwork
         Args
         ----
-            dim_input:
-            dim_output:
-            max_actions:
-            init_legal_actions:
+            dim_input: the size of the observed state
+            dim_output: the size of the state encoding output
+            max_actions: len(init_legal_actions)
+            init_legal_actions: make all actions legal
+            cooldown_criteria: CD criteria of the actions
         """
 
         super(Agent, self).__init__()
@@ -465,6 +469,10 @@ class Agent(nn.Module):
             nn.Linear(8, dim_output)
         )
 
+        self.cooldown_criteria = cooldown_criteria
+
+        self.current_cooldown = {}
+
     def init_agent(self):
 
         self.legal_actions = self.init_legal_actions.copy()
@@ -472,6 +480,13 @@ class Agent(nn.Module):
         self.log_probs = []
 
         self.rewards = []
+
+        self.current_cooldown = {TRADE_MASK: 0,
+                                   SET_OPEN: 0,
+                                  SET_OPEN2: 0,
+                                   DEC_OPEN: 0,
+                            SWITCH_SHUTDOWN: 0,
+                        SWITCH_MOVE_CONTROL: 0 }
 
     def forward(self, state):
 
@@ -489,13 +504,17 @@ class Agent(nn.Module):
 
     def select_actions(self, scores):
 
-        distribution = Categorical(scores)
+        distribution = Categorical(scores.view(-1, ))
 
         action = distribution.sample()
 
         self.log_probs.append(distribution.log_prob(action))
-        
-        return self.legal_actions[action.item()]
+
+        action_id = self.legal_actions[action.item()]
+
+        self.update_cooldown(action_id)
+
+        return action_id
     
     def get_legal_actions(self, state):
 
@@ -523,7 +542,53 @@ class Agent(nn.Module):
 
             self.legal_actions.append(DEC_OPEN)
 
-   
+        for act, cd in self.current_cooldown.items():
+
+            if cd > 0 and act in self.legal_actions:
+
+                self.legal_actions.remove(act)
+
+            elif cd == 0 and act not in self.legal_actions:
+
+                self.legal_actions.append(act)
+
+
+    def update_cooldown(self, action_id):
+
+        for act, cd in self.current_cooldown.items():
+
+            if action_id != act:
+
+                self.current_cooldown[act] = max(0, cd-1)
+            
+            else:
+
+                self.current_cooldown[action_id] = self.cooldown_criteria[action_id]
+
+class GRUAgent(Agent):
+
+    def __init__(self, dim_input, dim_output, max_actions, init_legal_actions, cooldown_criteria):
+
+        super().__init__(dim_input, dim_output, max_actions, init_legal_actions, cooldown_criteria)
+
+        self.gru = nn.GRU(dim_input, dim_input, batch_first=True)
+    
+    def forward(self, state):
+
+        self.get_legal_actions(state)
+
+        _, last_h = self.gru(state.view(1,1,-1))
+
+        state_vector = self.net(last_h.view(-1))
+
+        actions = torch.tensor(self.legal_actions, device=device)
+
+        actions_vectors = self.action_embeddings(actions)
+
+        scores = torch.matmul(actions_vectors, state_vector.unsqueeze(1)).squeeze()
+
+        return F.softmax(scores, dim=0)
+
 
 
 class Simulatoin:
@@ -581,7 +646,7 @@ class Simulatoin:
 
         self.optimizer.step()
 
-    def episodes(self, max_episodes=5, max_steps=10000, plot=False):
+    def episodes(self, max_episodes=5, max_steps=100, plot=False):
 
         for episode in range(max_episodes):
 
@@ -619,16 +684,26 @@ class Simulatoin:
 
 def main():
 
-    init_legal_actions = [0, 1, 2, 3, 4, 5, 6]
+    init_legal_actions = [TRADE_MASK, SET_OPEN, SET_OPEN2, DEC_OPEN, SWITCH_SHUTDOWN, SWITCH_MOVE_CONTROL, NO_ACTION]
+
+    cooldown_criteria = {TRADE_MASK: 7,
+                           SET_OPEN: 3,
+                          SET_OPEN2: 3,
+                           DEC_OPEN: 3,
+                    SWITCH_SHUTDOWN: 30,
+                SWITCH_MOVE_CONTROL: 30}
 
     args_agent = {
         "dim_input": 5, 
         "dim_output": 3,
         "max_actions": 7,
-        "init_legal_actions": init_legal_actions
+        "init_legal_actions": init_legal_actions,
+        "cooldown_criteria": cooldown_criteria
     }
 
-    agent = Agent(**args_agent).to(device)
+    #agent = Agent(**args_agent).to(device)
+
+    agent = GRUAgent(**args_agent).to(device)
 
     env = Environment()
 
