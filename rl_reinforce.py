@@ -154,44 +154,49 @@ class Environment:
             self.move_w = s[N_OPEN] / (s[N_OPEN] + 1)
 
         # update number of mask according to early threshold
-        if t <= self._config['early_threshold']:
-
-            s[N_MASK] = t * (self._config['MAX_mask'] - 0.1) / self._config['early_threshold'] + 0.1
-
-        else:
-
+        s[N_MASK] += (self._config['MAX_mask'] - 0.1) / self._config['early_threshold']
+        
+        if s[N_MASK] > self._config['MAX_mask']:
+            
             s[N_MASK] = self._config['MAX_mask']
 
         # update number of gold by determining if it is shutdown
         if s[IF_SHUTDOWN] == 1:
 
+            self.gamma_shut = 0.3
+
             s[N_GOLD] = max(0, s[N_GOLD] - self._config['shut_rate'] * t)
 
         else:
 
-            s[N_GOLD] = min(self._config['N_gold'], s[N_GOLD] + 0.7 * self._config['shut_rate'] * t)
+            self.gamma_shut = 1
+
+            if s[N_GOLD] < self._config['N_gold']:
+                
+                s[N_GOLD] = min(self._config['N_gold'], s[N_GOLD] + 0.01 * self._config['shut_rate'] * t)
 
         # conduct action
         if a == TRADE_MASK:
-
-            s[N_MASK] = (s[N_MASK] * self._config['N_total'] - self._config['N_donate']) / self._config['N_total']
+            
+            s[N_MASK] = max((s[N_MASK] * self._config['N_total'] - self._config['N_donate']) / self._config['N_total'], 0)
             
             # it would probably increase gold
-            if np.random.uniform() < 0.01:
+            if np.random.uniform() < 0.1:
 
                 s[N_GOLD] += self._config['inc_mask']
             
             # it would probably gain medical technology improvement
-            if np.random.uniform() < 0.01:
+            if np.random.uniform() < 0.25:
 
                 self.gamma_recover += self._config['inc_recover']
 
-                self.gamma_recover = min(1, self.gamma_recover)
-                
+                self.gamma_recover = min(0.95 / self._config['inc_recover'], self.gamma_recover)
+  
                 self.gamma_detect += self._config['inc_detect']
 
-                self.gamma_detect = min(1, self.gamma_detect)
-        
+                self.gamma_detect = min(0.95 /  self._config['alpha_eq'], self.gamma_detect)
+ 
+
         elif a == SET_OPEN:
 
             s[N_OPEN] = 0.5
@@ -207,7 +212,7 @@ class Environment:
             s[N_OPEN] = max(0, s[N_OPEN]) # should be larger than 0
 
         elif a == SWITCH_SHUTDOWN:
-
+            
             s[IF_SHUTDOWN] = 1 - s[IF_SHUTDOWN]
        
         elif a == SWITCH_MOVE_CONTROL:
@@ -221,8 +226,6 @@ class Environment:
             else:
 
                 s[N_GOLD] += self._config['inc_move']
-        
-        s[N_QUARANTINE] = self.Q + self.Q_move
 
         self.update_gamma_mask(s)
 
@@ -242,37 +245,36 @@ class Environment:
         SE_move = int(beta * self.S * self.gamma_move * self._config['p_move'])
 
         if s[IF_MOVE_CONTROL] == 1:
-
-            SE_move = 0.15 * SE_move
-        
+            
+            SE_move = int(0.15 * SE_move)
+            
         SE_move = min(self.S - SI - SE, SE_move)
-
+        
         EI = int(self._config['alpha_ei'] * self.E)
 
         EI_move = int(self._config['alpha_ei_move'] * self.E_move)
 
-        if self.Q < self._config['MAX_Q']:
-
+        if s[N_QUARANTINE].item() < self._config['MAX_Q']:
+            
             EQ = np.random.binomial(self.E, self.gamma_detect * self._config['alpha_eq'])
 
             EQ_move = np.random.binomial(self.E_move, self.gamma_detect * self._config['alpha_eq_move'])
-
-            EQ_move = min(self._config['MAX_Q'] - self.Q, EQ_move)
-
-            EQ = min(self._config['MAX_Q'] - self.Q - EQ_move, EQ)
-
+            
+            EQ_move = min(self._config['MAX_Q'] - s[N_QUARANTINE].item(), EQ_move)
+     
+            EQ = min(self._config['MAX_Q'] - s[N_QUARANTINE].item() - EQ_move, EQ)
+               
         else:
 
             EQ = 0
 
             EQ_move = 0
-        
+                  
         QI = int(self._config['alpha_qi'] * self.Q)
 
         QI_move = int(self._config['alpha_qi_move'] * self.Q_move)
         
-        IR = int(self.gamma_recover * self._config['alpha_ir'] * self.I)
-
+        IR = int(min(0.95, self.gamma_recover * self._config['alpha_ir']) * self.I)
 
         self.S = self.S - SI - SE - SE_move
 
@@ -287,11 +289,21 @@ class Environment:
         self.I = self.I + EI + EI_move + QI + QI_move - IR
 
         self.R = self.R + IR
+        
+        s[N_QUARANTINE] = self.Q + self.Q_move
 
         """ update reward """
-        reward = 5566
+        reward = s[N_GOLD] - ((self.E + self.E_move) * 0.5 + self.I * 0.5) / self._config['N_total']
+        
+        if s[N_QUARANTINE] == self._config['MAX_Q']:
+           
+           reward -= 0.01
 
         self.update_history(t)
+
+        if self.R / self._config['N_total'] > 0.92:
+
+            self.is_terminal = True
 
         return s, reward, self.is_terminal
 
@@ -315,7 +327,7 @@ class Environment:
 
         """
         self.gamma_mask = (1 - 0.8 * s[N_OPEN]) * self._config['MAX_mask'] / s[N_MASK]
-
+       
         self.gamma_mask = min(self.gamma_mask, 1)
 
     def update_gamma_move(self, s, t):
@@ -349,7 +361,7 @@ class Environment:
 
         for name in update_list:
 
-            self._history[name].append(getattr(self, name))
+            self._history[name].append(getattr(self, name) / self._config['N_total'])
     
     def plot_history(self, plot_list=['S', 'E', 'Q', 'I', 'R'], out_path='history.png'):
         """ To plot people transmission history line chart.
@@ -410,42 +422,29 @@ class Environment:
 
 class Agent(nn.Module):
     """ The decision-making policy network for the simulation.
-
     Attributes
     ----------
         init_legal_actions: make all actions legal
-
         legal_actions: legal actions in current state
-
         log_probs: the log(probability) at every time step
-
         rewards: RL rewards
-
         action_embeddings: the transform of the actions
-
         net: policy network
-
     Methods
     -------
         init_agent: reset the history fo the log probability and rewards
-
         forward: the inference of the policy network
-
         select_actions: return the action sampled from the policy nwetwork
-
         get_legal_actions: update the legal_actions at current state
-
     """
     def __init__(self, dim_input, dim_output, max_actions, init_legal_actions):
         """ Initialize the parameters of the policynwtwork
-
         Args
         ----
             dim_input:
             dim_output:
             max_actions:
             init_legal_actions:
-
         """
 
         super(Agent, self).__init__()
@@ -529,18 +528,15 @@ class Agent(nn.Module):
 
 class Simulatoin:
     """ The interaction between environment(epidemic infection model) and agent(policy network)
-
     Attributes
     ----------
         agent
         enviroment
         gamma
         optimizer
-
     Methods
     -------
         policy_gradient_update:
-
         episodes:
     """
 
@@ -585,7 +581,7 @@ class Simulatoin:
 
         self.optimizer.step()
 
-    def episodes(self, max_episodes=5, max_steps=150, plot=False):
+    def episodes(self, max_episodes=5, max_steps=10000, plot=False):
 
         for episode in range(max_episodes):
 
