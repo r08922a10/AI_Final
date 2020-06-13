@@ -104,7 +104,7 @@ class Environment:
         self.gamma_mask = self._config['gamma_mask']
         self.gamma_recover = self._config['gamma_recover']
         self.gamma_detect = self._config['gamma_detect']
-        self.gamma_detect_move = self._config['gamma_detect']
+        self.gamma_detect_move = self._config['gamma_detect_move']
         self.gamma_move = self._config['gamma_move']
         self.gamma_shut = self._config['gamma_shut']
 
