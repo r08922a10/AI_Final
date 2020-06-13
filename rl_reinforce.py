@@ -194,9 +194,6 @@ class Environment:
   
                 self.gamma_detect += self._config['inc_detect']
 
-                self.gamma_detect = min(0.95 /  self._config['alpha_eq'], self.gamma_detect)
- 
-
         elif a == SET_OPEN:
 
             s[N_OPEN] = 0.5
@@ -256,9 +253,9 @@ class Environment:
 
         if s[N_QUARANTINE].item() < self._config['MAX_Q']:
             
-            EQ = np.random.binomial(self.E, self.gamma_detect * self._config['alpha_eq'])
+            EQ = np.random.binomial(self.E, min(0.95, self.gamma_detect * self._config['alpha_eq']))
 
-            EQ_move = np.random.binomial(self.E_move, self.gamma_detect * self._config['alpha_eq_move'])
+            EQ_move = np.random.binomial(self.E_move, min(0.95, self.gamma_detect * self._config['alpha_eq_move']))
             
             EQ_move = min(self._config['MAX_Q'] - s[N_QUARANTINE].item(), EQ_move)
      
@@ -300,8 +297,8 @@ class Environment:
            reward -= 0.01
 
         self.update_history(t)
-
-        if self.R / self._config['N_total'] > 0.92:
+        
+        if self.R / self._config['N_total'] > 0.95:
 
             self.is_terminal = True
 
@@ -312,12 +309,16 @@ class Environment:
 
         Args:
             state : global state
-
+     
         Returns:
             observed_state : obsevable state for agent
 
         """
-        return state[:5].clone()
+        observed_state = torch.zeros(7).to(device)
+        observed_state[:5] = state[:5].clone()
+        observed_state[5] = self.I
+        observed_state[6] = self.R
+        return observed_state
     
     def update_gamma_mask(self, s):
         """ To update gamma_mask via openness and max of masks constant.
@@ -581,7 +582,7 @@ class Simulatoin:
 
         self.optimizer.step()
 
-    def episodes(self, max_episodes=5, max_steps=10000, plot=False):
+    def episodes(self, max_episodes=5, max_steps=400, plot=False):
 
         for episode in range(max_episodes):
 
@@ -596,7 +597,7 @@ class Simulatoin:
                 actions_probs = self.agent.forward(state_observed)
 
                 action = self.agent.select_actions(actions_probs)
-
+               
                 state, reward, is_terminal = self.environment.step(state, action, t=t)
 
                 state_observed = self.environment.obeserved_state(state)
@@ -622,7 +623,7 @@ def main():
     init_legal_actions = [0, 1, 2, 3, 4, 5, 6]
 
     args_agent = {
-        "dim_input": 5, 
+        "dim_input": 7, 
         "dim_output": 3,
         "max_actions": 7,
         "init_legal_actions": init_legal_actions
