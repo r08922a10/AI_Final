@@ -17,7 +17,7 @@
     "alpha_qi": 0.5, 
     "alpha_ei_move": 0.055, 
     "alpha_ir_move": 0.02, 
-    "alpha_eq_move": 0.85, 
+    "alpha_eq_move": 0.8, 
     "alpha_qi_move": 0.5, 
 
     "N_total": 23000012,
@@ -25,7 +25,7 @@
     "N_donate": 2000000,
     "inc_mask": 0.0005,
     "inc_recover": 0.05,  
-    "inc_detect": 0.1, 
+    "inc_detect": 0.05, 
     "inc_move": 0.03, 
     "N_gold": 0.3,
     "N_open": 0.2,

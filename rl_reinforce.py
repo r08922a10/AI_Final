@@ -189,8 +189,13 @@ class Environment:
             if np.random.uniform() < 0.25:
 
                 self.gamma_recover += self._config['inc_recover']
+
+                self.gamma_recover = min(0.95 / self._config['inc_recover'], self.gamma_recover)
   
                 self.gamma_detect += self._config['inc_detect']
+
+                self.gamma_detect = min(0.95 /  self._config['alpha_eq'], self.gamma_detect)
+ 
 
         elif a == SET_OPEN:
 
@@ -251,9 +256,9 @@ class Environment:
 
         if s[N_QUARANTINE].item() < self._config['MAX_Q']:
             
-            EQ = np.random.binomial(self.E, min(0.95, self.gamma_detect * self._config['alpha_eq']))
+            EQ = np.random.binomial(self.E, self.gamma_detect * self._config['alpha_eq'])
 
-            EQ_move = np.random.binomial(self.E_move, min(0.95, self.gamma_detect * self._config['alpha_eq_move']))
+            EQ_move = np.random.binomial(self.E_move, self.gamma_detect * self._config['alpha_eq_move'])
             
             EQ_move = min(self._config['MAX_Q'] - s[N_QUARANTINE].item(), EQ_move)
      
@@ -291,6 +296,7 @@ class Environment:
         reward = s[N_GOLD] - ((self.E + self.E_move) * 0.5 + self.I * 0.5) / self._config['N_total']
         
         if s[N_QUARANTINE] == self._config['MAX_Q']:
+           
            reward -= 0.01
 
         self.update_history(t)
@@ -415,17 +421,17 @@ class Agent(nn.Module):
 
     Attributes
     ----------
-        init_legal_actions: make all actions legal
+        init_legal_actions:
 
-        legal_actions: legal actions in current state
+        legal_actions:
 
-        log_probs: the log(probability) at every time step
+        log_probs:
 
-        rewards: RL rewards
+        rewards:
 
-        action_embeddings: the transform of the actions
+        action_embeddings:
 
-        net: policy network
+        net:
 
     Methods
     -------
@@ -434,8 +440,6 @@ class Agent(nn.Module):
         forward: the inference of the policy network
 
         select_actions: return the action sampled from the policy nwetwork
-
-        get_legal_actions: update the legal_actions at current state
 
     """
     def __init__(self, dim_input, dim_output, max_actions, init_legal_actions):
@@ -478,8 +482,6 @@ class Agent(nn.Module):
 
     def forward(self, state):
 
-        self.get_legal_actions(state)
-
         state_vector = self.net(state)
 
         actions = torch.tensor(self.legal_actions, device=device)
@@ -498,35 +500,7 @@ class Agent(nn.Module):
 
         self.log_probs.append(distribution.log_prob(action))
         
-        return self.legal_actions[action.item()]
-    
-    def get_legal_actions(self, state):
-
-        if state[N_OPEN] >= 0.5 and SET_OPEN in self.legal_actions:
-
-            self.legal_actions.remove(SET_OPEN)
-
-        elif state[N_OPEN] < 0.5 and SET_OPEN not in self.legal_actions:
-
-            self.legal_actions.append(SET_OPEN)
-
-        if state[N_OPEN] >= 1 and SET_OPEN2 in self.legal_actions:
-
-            self.legal_actions.remove(SET_OPEN2)
-
-        elif state[N_OPEN] < 1 and SET_OPEN2 not in self.legal_actions:
-
-            self.legal_actions.append(SET_OPEN2)
-
-        if state[N_OPEN] == 0 and DEC_OPEN in self.legal_actions:
-
-            self.legal_actions.remove(DEC_OPEN)
-
-        elif state[N_OPEN] > 0 and DEC_OPEN not in self.legal_actions:
-
-            self.legal_actions.append(DEC_OPEN)
-
-   
+        return action.item()
 
 
 class Simulatoin:
@@ -587,11 +561,7 @@ class Simulatoin:
 
         self.optimizer.step()
 
-<<<<<<< HEAD
     def episodes(self, max_episodes=3, max_steps=300, plot=False):
-=======
-    def episodes(self, max_episodes=5, max_steps=150, plot=False):
->>>>>>> AI/master
 
         for episode in range(max_episodes):
 
@@ -623,9 +593,7 @@ class Simulatoin:
 
             self.agent.init_agent()
 
-            if plot:
-
-                self.environment.plot_history(out_path=f'ep{episode:02d}_history.png')
+            self.environment.plot_history(out_path=f'ep{episode:02d}_history.png')
 
 def main():
 
@@ -644,7 +612,7 @@ def main():
 
     game = Simulatoin(agent, env, optim.Adam(agent.parameters(), lr=1e-3))
 
-    game.episodes(plot=True)
+    game.episodes()
 
 
 if __name__ == "__main__":
