@@ -115,6 +115,8 @@ class Environment:
 
         self._history = collections.defaultdict(list)
 
+        self._assert_all(if_config=True, if_seir=True)
+
         return self.start.clone()
    
     def step(self, s, a, t):
@@ -146,6 +148,8 @@ class Environment:
         """
         
         """ update state """
+        self._assert_all(s=s, if_seir=True)
+
         # record move weight and bias when timestep is at early threshold
         if t == self._config['early_threshold']:
 
@@ -190,13 +194,12 @@ class Environment:
 
                 self.gamma_recover += self._config['inc_recover']
 
-                self.gamma_recover = min(0.95 / self._config['inc_recover'], self.gamma_recover)
+                self.gamma_recover = min(0.95 / self._config['alpha_ir'], self.gamma_recover)
   
                 self.gamma_detect += self._config['inc_detect']
 
                 self.gamma_detect = min(0.95 /  self._config['alpha_eq'], self.gamma_detect)
  
-
         elif a == SET_OPEN:
 
             s[N_OPEN] = 0.5
@@ -256,9 +259,9 @@ class Environment:
 
         if s[N_QUARANTINE].item() < self._config['MAX_Q']:
             
-            EQ = np.random.binomial(self.E, self.gamma_detect * self._config['alpha_eq'])
+            EQ = np.random.binomial(self.E - EI, self.gamma_detect * self._config['alpha_eq'])
 
-            EQ_move = np.random.binomial(self.E_move, self.gamma_detect * self._config['alpha_eq_move'])
+            EQ_move = np.random.binomial(self.E_move - EI_move, self.gamma_detect * self._config['alpha_eq_move'])
             
             EQ_move = min(self._config['MAX_Q'] - s[N_QUARANTINE].item(), EQ_move)
      
@@ -274,7 +277,7 @@ class Environment:
 
         QI_move = int(self._config['alpha_qi_move'] * self.Q_move)
         
-        IR = int(min(0.95, self.gamma_recover * self._config['alpha_ir']) * self.I)
+        IR = int(self.gamma_recover * self._config['alpha_ir'] * self.I)
 
         self.S = self.S - SI - SE - SE_move
 
@@ -305,7 +308,88 @@ class Environment:
 
             self.is_terminal = True
 
+        
+        self._assert_all(s=s, if_seir=True, if_variable=True)
+
         return s, reward, self.is_terminal
+
+
+    def _assert_all(self, s=None, if_config=False, if_variable=False, if_seir=False, if_all=False):
+        """ To assert that all values in environment are reasonable.
+
+        Args:
+            s: the state you want to assert values. Note that only required when if_variable is True.
+            if_config: if True assert all configs in initialization file are reasonable. 
+            if_variable: if True, assert all variables are reasonable when the env updates.
+            if_seir: if True, assert all seir components are reasonable when the env updates.
+        """
+        if if_config or if_all:
+
+            rule1 = lambda x: 0 <= x <= 1
+
+            alpha_list = ['alpha_ei', 'alpha_ir', 'alpha_eq', 'alpha_qi',\
+                        'alpha_ei_move', 'alpha_ir_move', 'alpha_eq_move', 'alpha_qi_move']
+
+            other_list = ['beta', 'p_move', 'shut_rate']
+
+            for name in alpha_list + other_list:
+
+                assert rule1(self._config[name])
+
+            rule2 = lambda x: 0 <= x
+
+            inc_list = ['inc_mask', 'inc_recover', 'inc_detect', 'inc_move']
+
+            gamma_list = ['gamma_mask', 'gamma_move', 'gamma_shut', 'gamma_recover', 'gamma_detect']
+
+            constant_list = ['N_mask', 'N_gold', 'N_open', 'MAX_mask', 'MAX_Q', 'early_threshold']
+
+            for name in inc_list + gamma_list + constant_list:
+
+                assert rule2(self._config[name])
+
+            rule3 = lambda x: 1 <= x
+
+            for name in ['rE', 'rI', 'N_total', 'N_donate']:
+
+                assert rule3(self._config[name])
+        
+        if if_variable or if_all:
+
+            assert s is not None
+
+            assert s[N_MASK] <= self._config['MAX_mask']
+
+            assert 0 <= s[N_OPEN] <= 1
+
+            assert 0 <= s[N_QUARANTINE] <= self._config['MAX_Q']
+
+            assert s[IF_SHUTDOWN] in (0, 1)
+           
+            assert s[IF_MOVE_CONTROL] in (0, 1)
+
+            # assert 0 <= s[N_GOLD] TODO 
+            
+            assert 0 <= self.move_w <= 1
+
+            assert 0 <= self.move_b
+            
+            assert 0 <= self.gamma_shut # TODO
+
+            assert 0 <= self.gamma_recover # TODO
+
+            assert 0 <= self.gamma_detect # TODO
+
+        if if_seir or if_all:
+
+            pop_rule = lambda x: 0 <= x <= self._config['N_total']
+
+            for name in ['S', 'E', 'E_move', 'Q', 'Q_move', 'I', 'R']:
+
+                assert pop_rule(getattr(self, name))
+
+            assert 0 <= self.Q + self.Q_move < self._config['MAX_Q']
+
 
     def obeserved_state(self, state):
         """ To transform the global state to the obsevable state for agent.
