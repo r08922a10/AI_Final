@@ -560,9 +560,10 @@ class Agent(nn.Module):
         self.action_embeddings = nn.Embedding(max_actions, dim_output)
 
         self.net = nn.Sequential(
-            nn.Linear(dim_input, 8),
+            nn.Linear(dim_input, dim_input),
             nn.Dropout(0.1),
-            nn.Linear(8, dim_output)
+            nn.ReLU(),
+            nn.Linear(dim_input, dim_output)
         )
 
         self.cooldown_criteria = cooldown_criteria
@@ -610,6 +611,14 @@ class Agent(nn.Module):
         self.update_cooldown(action_id)
 
         return action_id
+
+    def greedy_actions(self, scores):
+
+        action = torch.argmax(scores.detach())
+
+        action_id = self.legal_actions[action.item()]
+
+        return action_id  
     
     def get_legal_actions(self, state):
 
@@ -742,8 +751,12 @@ class Simulatoin:
         gamma
         optimizer
         verbose
+        baseline
+        is_actor_critic
     Methods
     -------
+        testing: tesintg mode
+        get_baseline: get the naive sampling-based baseline of accumulated reward (still under development)
         episodic_policy_loss:
         episodes:
         monti_carlo_estimation:
@@ -764,6 +777,101 @@ class Simulatoin:
         self.baseline = None
 
         self.is_actor_critic = False
+
+    def testing(self, max_steps=200):
+
+        self.agent.eval()
+
+        self.agent.init_agent()
+
+        state = self.environment.init_state()
+
+        state_observed = self.environment.obeserved_state(state)
+
+        reward_eps = 0
+
+        actions = []
+
+        for t in range(max_steps):
+
+            actions_probs = self.agent.forward(state_observed)
+
+            action = self.agent.greedy_actions(actions_probs)
+
+            actions.append(action)
+            
+            state, reward, is_terminal = self.environment.step(state, action, t=t)
+
+            reward_eps+=reward
+
+            state_observed = self.environment.obeserved_state(state)
+
+            if is_terminal:
+
+                break
+
+        if self.verbose:
+
+            print("(Testing) Total Reward {:>6.2f}".format(reward_eps))
+
+        self.agent.train()
+
+
+    def get_baseline(self, max_episodes=50, max_steps=400):
+
+        R = {}
+
+        for step in range(max_steps):
+
+            R[step] = []
+
+        for _ in range(max_episodes):
+
+            state = self.environment.init_state()
+
+            rewards = []
+
+            for t in range(max_steps):
+
+                action = NO_ACTION
+                
+                state, reward, is_terminal = self.environment.step(state, action, t=t)
+
+                rewards.append(reward)
+
+                if is_terminal:
+
+                    break
+
+            v = 0
+
+            accumulated_rewards = []
+
+            for r in rewards[::-1]:   # r_T, r_{T-1}, .....r_0
+
+                v = r + self.gamma * v
+
+                accumulated_rewards.insert(0, v)
+
+            for i, ar in enumerate(accumulated_rewards):
+
+                ar_normalize = (ar - np.mean(accumulated_rewards)) / (np.std(accumulated_rewards) + 1e-9) 
+
+                R[i].append(ar_normalize)
+
+        for k, v in R.items():
+            
+            if len(v) > 0:
+
+                R[k] = np.mean(v)
+
+            else:
+
+                R[k] = 0
+
+        self.baseline = R
+
+
 
 
     def episodic_policy_loss(self):
@@ -787,8 +895,9 @@ class Simulatoin:
 
         accumulated_rewards = (accumulated_rewards - accumulated_rewards.mean()) / (accumulated_rewards.std() + 1e-9)
 
-        for log_prob, R in zip(self.agent.log_probs, accumulated_rewards):
+        for _ , (log_prob, R) in enumerate(zip(self.agent.log_probs, accumulated_rewards)):
 
+            #policy_loss += (-log_prob * (R - self.baseline[i]))
             policy_loss += (-log_prob * R)
         
         return policy_loss
@@ -887,7 +996,7 @@ class Simulatoin:
 
             self.optimizer.step()
 
-            if plot:
+            if plot and episode:
 
                 self.environment.plot_history(out_path=f'ep{episode:02d}_history.png')
 
@@ -895,11 +1004,11 @@ class Simulatoin:
 
         for i in range(iterations):
 
-            self.agent.init_agent()
-
             loss_i = 0
 
             for _ in range(num_rollouts):
+
+                self.agent.init_agent()
 
                 state = self.environment.init_state()
 
@@ -961,35 +1070,42 @@ def main():
 
     init_legal_actions = [TRADE_MASK, SET_OPEN, SET_OPEN2, DEC_OPEN, SWITCH_SHUTDOWN, SWITCH_MOVE_CONTROL, NO_ACTION]
 
-    cooldown_criteria = {TRADE_MASK: 7,
-                           SET_OPEN: 3,
-                          SET_OPEN2: 3,
-                           DEC_OPEN: 3,
-                    SWITCH_SHUTDOWN: 30,
-                SWITCH_MOVE_CONTROL: 30}
+    cooldown_criteria = {TRADE_MASK: 7-7,
+                           SET_OPEN: 3-3,
+                          SET_OPEN2: 3-3,
+                           DEC_OPEN: 3-3,
+                    SWITCH_SHUTDOWN: 30-30,
+                SWITCH_MOVE_CONTROL: 30-30}
 
     args_agent = {
         "dim_input": 7, 
-        "dim_output": 3,
+        "dim_output": 7,
         "max_actions": 7,
         "init_legal_actions": init_legal_actions,
         "cooldown_criteria": cooldown_criteria
     }
 
     #agent = Agent(**args_agent).to(device)
-    #agent = GRUAgent(**args_agent).to(device)
+    agent = GRUAgent(**args_agent).to(device)
 
-    agent = ActorCriticAgent(**args_agent).to(device)
+    #agent = ActorCriticAgent(**args_agent).to(device)
 
     env = Environment()
 
-    game = Simulatoin(agent, env, optim.Adam(agent.parameters(), lr=1e-5), verbose=True, gamma=0.7)
+    optimizer = optim.Adam(agent.parameters(), lr=1e-5)
+    game = Simulatoin(agent, env, optimizer, verbose=True, gamma=0.9)
 
-    game.is_actor_critic = True
+    #game.is_actor_critic = True
 
-    #game.episodes(plot=False)
+    game.testing()
 
-    game.monti_carlo_estimation(iterations=10, num_rollouts=10, max_steps=300, plot=False)
+    #game.get_baseline()
+
+    #game.episodes(max_episodes=10, max_steps=200, plot=False)
+
+    game.monti_carlo_estimation(iterations=10, num_rollouts=10, max_steps=200, plot=False)
+
+    game.testing()
 
 
 if __name__ == "__main__":
