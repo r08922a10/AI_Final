@@ -672,16 +672,7 @@ class GRUAgent(Agent):
 
     def init_agent(self):
 
-        self.legal_actions = self.init_legal_actions.copy()
-
-        self.log_probs = []
-
-        self.rewards = []
-        
-        self.current_cooldown = {}
-
-        for act in self.cooldown_criteria.keys():
-            self.current_cooldown[act] = 0
+        super().init_agent()
 
         self.memory = None
 
@@ -701,6 +692,45 @@ class GRUAgent(Agent):
 
         return F.softmax(scores, dim=0)
 
+class ActorCriticAgent(GRUAgent):
+
+    def __init__(self, dim_input, dim_output, max_actions, init_legal_actions, cooldown_criteria):
+
+        super().__init__(dim_input, dim_output, max_actions, init_legal_actions, cooldown_criteria)
+
+        self.value_gru = nn.GRU(dim_input, dim_input, batch_first=True)
+
+        self.value_net = nn.Sequential(
+            nn.Linear(dim_input, 1)
+        )
+
+        self.state_values = []
+
+        self.memory_value = None
+
+    def init_agent(self):
+
+        super().init_agent()
+
+        self.state_values = []
+
+        self.memory_value = None
+
+    def forward_value(self, state):
+
+        _, self.memory_value = self.gru(state.view(1,1,-1), self.memory_value)
+
+        state_value = self.value_net(self.memory_value.view(-1))
+
+        return state_value
+
+    def select_actions(self, scores, state_value):
+
+        action_id = super().select_actions(scores)
+
+        self.state_values.append(state_value)
+
+        return action_id
 
 
 class Simulatoin:
@@ -711,23 +741,32 @@ class Simulatoin:
         enviroment
         gamma
         optimizer
+        verbose
     Methods
     -------
-        policy_gradient_update:
+        episodic_policy_loss:
         episodes:
+        monti_carlo_estimation:
     """
 
-    def __init__(self, agent: Agent, environment: Environment, optimizer=None):
+    def __init__(self, agent: Agent, environment: Environment, optimizer=None, gamma=0.9, verbose=False):
 
         self.agent = agent
 
         self.environment = environment
 
-        self.gamma = 0.9
+        self.gamma = gamma
 
         self.optimizer = optimizer
-    
-    def policy_gradient_update(self):
+
+        self.verbose = verbose
+
+        self.baseline = None
+
+        self.is_actor_critic = False
+
+
+    def episodic_policy_loss(self):
 
         policy_loss = 0
         accumulated_rewards = []
@@ -748,17 +787,47 @@ class Simulatoin:
 
         accumulated_rewards = (accumulated_rewards - accumulated_rewards.mean()) / (accumulated_rewards.std() + 1e-9)
 
-        for log_prob, r in zip(self.agent.log_probs, accumulated_rewards):
+        for log_prob, R in zip(self.agent.log_probs, accumulated_rewards):
 
-            policy_loss += (-log_prob * r)
-
-        self.optimizer.zero_grad()
+            policy_loss += (-log_prob * R)
         
-        policy_loss.backward()
+        return policy_loss
 
-        self.optimizer.step()
+    def actor_critic_policy_loss(self):
 
-    def episodes(self, max_episodes=5, max_steps=400, plot=False):
+        policy_loss = 0
+
+        value_loss = 0
+
+        accumulated_rewards = []
+
+        # v_t = r_t + gammar*v_{t+1}
+        # v_T = 0
+        # agent.rewards : [r_0, r_1, r_2, ........ r_T]
+
+        v = 0   # V_T = 0
+
+        for r in self.agent.rewards[::-1]:   # r_T, r_{T-1}, .....r_0
+
+            v = r + self.gamma * v
+
+            accumulated_rewards.insert(0, v)
+
+        accumulated_rewards = torch.tensor(accumulated_rewards, device=device)
+
+        accumulated_rewards = (accumulated_rewards - accumulated_rewards.mean()) / (accumulated_rewards.std() + 1e-9)
+
+        for log_prob, R, value in zip(self.agent.log_probs, accumulated_rewards, self.agent.state_values):
+            
+            policy_loss += (-log_prob * (R - value.item()) )
+
+            value_loss += F.smooth_l1_loss(value, torch.tensor([R], device=device))
+
+        loss = policy_loss + value_loss
+        
+        return loss
+
+    def episodes(self, max_episodes=50, max_steps=400, plot=False):
 
         for episode in range(max_episodes):
 
@@ -768,31 +837,125 @@ class Simulatoin:
 
             state_observed = self.environment.obeserved_state(state)
 
-            reward_episode = 0
+            loss_eps = 0
+
+            reward_eps = 0
 
             for t in range(max_steps):
 
-                actions_probs = self.agent.forward(state_observed)
+                if self.is_actor_critic:
 
-                action = self.agent.select_actions(actions_probs)
+                    actions_probs = self.agent.forward(state_observed)
+
+                    state_values = self.agent.forward_value(state_observed)
+
+                    action = self.agent.select_actions(actions_probs, state_values)
+
+                else:
+
+                    actions_probs = self.agent.forward(state_observed)
+
+                    action = self.agent.select_actions(actions_probs)
                
                 state, reward, is_terminal = self.environment.step(state, action, t=t)
+
+                reward_eps+=reward
 
                 state_observed = self.environment.obeserved_state(state)
 
                 self.agent.rewards.append(reward)
 
-                reward_episode += reward
-
                 if is_terminal:
 
                     break
+            
+            if self.is_actor_critic:
 
-            self.policy_gradient_update()
+                loss_eps = self.actor_critic_policy_loss()
+
+            else:
+
+                loss_eps = self.episodic_policy_loss()
+
+            if self.verbose:
+
+                print("Episode {:>3d} | Loss {:>6.2f} | Total Reward {:>6.2f}".format(episode, loss_eps.item(), reward_eps))
+
+            self.optimizer.zero_grad()
+            
+            loss_eps.backward()
+
+            self.optimizer.step()
 
             if plot:
 
                 self.environment.plot_history(out_path=f'ep{episode:02d}_history.png')
+
+    def monti_carlo_estimation(self, iterations=3, num_rollouts=5, max_steps=400, plot=False):
+
+        for i in range(iterations):
+
+            self.agent.init_agent()
+
+            loss_i = 0
+
+            for _ in range(num_rollouts):
+
+                state = self.environment.init_state()
+
+                state_observed = self.environment.obeserved_state(state)
+
+                for t in range(max_steps):
+
+                    if self.is_actor_critic:
+
+                        actions_probs = self.agent.forward(state_observed)
+
+                        state_values = self.agent.forward_value(state_observed)
+
+                        action = self.agent.select_actions(actions_probs, state_values)
+
+                    else:
+
+                        actions_probs = self.agent.forward(state_observed)
+
+                        action = self.agent.select_actions(actions_probs)
+                
+                    state, reward, is_terminal = self.environment.step(state, action, t=t)
+
+                    state_observed = self.environment.obeserved_state(state)
+
+                    self.agent.rewards.append(reward)
+
+                    if is_terminal:
+
+                        break
+                
+                if self.is_actor_critic:
+
+                    loss_i += self.actor_critic_policy_loss()
+
+                else:
+
+                    loss_i += self.episodic_policy_loss()
+
+            loss_i /= num_rollouts
+
+            self.optimizer.zero_grad()
+
+            if self.verbose:
+
+                print("(MC) Iteration {:>3d} | loss(Mean) {:>6.2f}".format(i, loss_i.item()))
+
+            loss_i.backward()
+
+            self.optimizer.step()
+
+            if plot:
+
+                self.environment.plot_history(out_path=f'(MC) iteration{i:02d}_history.png')
+                
+            
 
 def main():
 
@@ -814,13 +977,19 @@ def main():
     }
 
     #agent = Agent(**args_agent).to(device)
-    agent = GRUAgent(**args_agent).to(device)
+    #agent = GRUAgent(**args_agent).to(device)
+
+    agent = ActorCriticAgent(**args_agent).to(device)
 
     env = Environment()
 
-    game = Simulatoin(agent, env, optim.Adam(agent.parameters(), lr=1e-3))
+    game = Simulatoin(agent, env, optim.Adam(agent.parameters(), lr=1e-5), verbose=True, gamma=0.7)
 
-    game.episodes(plot=True)
+    game.is_actor_critic = True
+
+    #game.episodes(plot=False)
+
+    game.monti_carlo_estimation(iterations=10, num_rollouts=10, max_steps=300, plot=False)
 
 
 if __name__ == "__main__":
