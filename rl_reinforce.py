@@ -614,6 +614,8 @@ class Agent(nn.Module):
 
     def greedy_actions(self, scores):
 
+        #print(scores.size())
+        #exit()
         action = torch.argmax(scores.detach())
 
         action_id = self.legal_actions[action.item()]
@@ -622,6 +624,7 @@ class Agent(nn.Module):
     
     def get_legal_actions(self, state):
 
+        
         if state[N_OPEN] >= 0.5 and SET_OPEN in self.legal_actions:
 
             self.legal_actions.remove(SET_OPEN)
@@ -645,7 +648,7 @@ class Agent(nn.Module):
         elif state[N_OPEN] > 0 and DEC_OPEN not in self.legal_actions:
 
             self.legal_actions.append(DEC_OPEN)
-
+        
         for act, cd in self.current_cooldown.items():
 
             if cd > 0 and act in self.legal_actions:
@@ -655,6 +658,8 @@ class Agent(nn.Module):
             elif cd == 0 and act not in self.legal_actions:
 
                 self.legal_actions.append(act)
+
+        assert len(self.legal_actions) == len(set(self.legal_actions)), "Redundant Actions"
 
 
     def update_cooldown(self, action_id):
@@ -778,43 +783,49 @@ class Simulatoin:
 
         self.is_actor_critic = False
 
-    def testing(self, max_steps=200):
+    def testing(self, max_steps=200, max_episode=10):
 
         self.agent.eval()
 
-        self.agent.init_agent()
+        reward_total = 0
 
-        state = self.environment.init_state()
+        for ep in range(max_episode):
 
-        state_observed = self.environment.obeserved_state(state)
+            self.agent.init_agent()
 
-        reward_eps = 0
-
-        actions = []
-
-        for t in range(max_steps):
-
-            actions_probs = self.agent.forward(state_observed)
-
-            action = self.agent.greedy_actions(actions_probs)
-
-            actions.append(action)
-            
-            state, reward, is_terminal = self.environment.step(state, action, t=t)
-
-            reward_eps+=reward
+            state = self.environment.init_state()
 
             state_observed = self.environment.obeserved_state(state)
 
-            if is_terminal:
+            reward_eps = 0
 
-                break
+            for t in range(max_steps):
+
+                actions_probs = self.agent.forward(state_observed)
+
+                action = self.agent.greedy_actions(actions_probs)
+                
+                state, reward, is_terminal = self.environment.step(state, action, t=t)
+
+                reward_eps+=reward
+
+                state_observed = self.environment.obeserved_state(state)
+
+                if is_terminal:
+
+                    break
+
+            reward_total += reward_eps
+
+        reward_avg = reward_total / max_episode
 
         if self.verbose:
 
-            print("(Testing) Total Reward {:>6.2f}".format(reward_eps))
+            print("(Testing) Total Reward {:>6.2f}".format(reward_avg))
 
         self.agent.train()
+
+        return reward_avg.item()
 
 
     def get_baseline(self, max_episodes=50, max_steps=400):
@@ -845,11 +856,13 @@ class Simulatoin:
 
             v = 0
 
+            gamma = self.gamma*0
+
             accumulated_rewards = []
 
             for r in rewards[::-1]:   # r_T, r_{T-1}, .....r_0
 
-                v = r + self.gamma * v
+                v = r + gamma * v
 
                 accumulated_rewards.insert(0, v)
 
@@ -870,9 +883,6 @@ class Simulatoin:
                 R[k] = 0
 
         self.baseline = R
-
-
-
 
     def episodic_policy_loss(self):
 
@@ -895,7 +905,7 @@ class Simulatoin:
 
         accumulated_rewards = (accumulated_rewards - accumulated_rewards.mean()) / (accumulated_rewards.std() + 1e-9)
 
-        for _ , (log_prob, R) in enumerate(zip(self.agent.log_probs, accumulated_rewards)):
+        for i , (log_prob, R) in enumerate(zip(self.agent.log_probs, accumulated_rewards)):
 
             #policy_loss += (-log_prob * (R - self.baseline[i]))
             policy_loss += (-log_prob * R)
@@ -965,7 +975,7 @@ class Simulatoin:
                     actions_probs = self.agent.forward(state_observed)
 
                     action = self.agent.select_actions(actions_probs)
-               
+
                 state, reward, is_terminal = self.environment.step(state, action, t=t)
 
                 reward_eps+=reward
@@ -1006,6 +1016,8 @@ class Simulatoin:
 
             loss_i = 0
 
+            total_reward = 0
+
             for _ in range(num_rollouts):
 
                 self.agent.init_agent()
@@ -1036,6 +1048,8 @@ class Simulatoin:
 
                     self.agent.rewards.append(reward)
 
+                    total_reward += reward
+
                     if is_terminal:
 
                         break
@@ -1050,11 +1064,13 @@ class Simulatoin:
 
             loss_i /= num_rollouts
 
+            total_reward /= num_rollouts
+
             self.optimizer.zero_grad()
 
             if self.verbose:
 
-                print("(MC) Iteration {:>3d} | loss(Mean) {:>6.2f}".format(i, loss_i.item()))
+                print("(MC) Iteration {:>3d} | Avg Loss {:>8.2f} | Avg Total Reward {:>8.2f} ".format(i, loss_i.item(), total_reward.item()))
 
             loss_i.backward()
 
@@ -1086,26 +1102,33 @@ def main():
     }
 
     #agent = Agent(**args_agent).to(device)
-    agent = GRUAgent(**args_agent).to(device)
+    #agent = GRUAgent(**args_agent).to(device)
 
-    #agent = ActorCriticAgent(**args_agent).to(device)
+    agent = ActorCriticAgent(**args_agent).to(device)
 
     env = Environment()
 
-    optimizer = optim.Adam(agent.parameters(), lr=1e-5)
-    game = Simulatoin(agent, env, optimizer, verbose=True, gamma=0.9)
+    optimizer = optim.Adam(agent.parameters(), lr=1e-3)
 
-    #game.is_actor_critic = True
+    game = Simulatoin(agent, env, optimizer, verbose=True, gamma=0.99)
 
-    game.testing()
+    game.is_actor_critic = True
 
-    #game.get_baseline()
+    #game.episodes(max_episodes=100, max_steps=200, plot=False)
 
-    #game.episodes(max_episodes=10, max_steps=200, plot=False)
+    r_0 = game.testing(max_steps=200, max_episode=10)
 
-    game.monti_carlo_estimation(iterations=10, num_rollouts=10, max_steps=200, plot=False)
+    try:
 
-    game.testing()
+        game.monti_carlo_estimation(iterations=50, num_rollouts=10, max_steps=200, plot=False)
+    
+    except KeyboardInterrupt:
+
+        pass
+
+    r_1 = game.testing(max_steps=200, max_episode=10)
+
+    print("Init Model {} | Trained Model {} ".format(r_0, r_1))
 
 
 if __name__ == "__main__":
