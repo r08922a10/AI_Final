@@ -978,8 +978,6 @@ class Simulatoin:
 
                 state, reward, is_terminal = self.environment.step(state, action, t=t)
 
-                reward_new = reward - self.baseline[t]
-
                 reward_eps+=reward
 
                 state_observed = self.environment.obeserved_state(state)
