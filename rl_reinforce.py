@@ -5,12 +5,17 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.distributions import Categorical
 import json
+import math
 import numpy as np
-from constant import *
 import collections
 import matplotlib as mpl
 mpl.use('Agg')
 import matplotlib.pyplot as plt
+
+np.random.seed(666)
+torch.manual_seed(666)
+
+from constant import *
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")    
 
@@ -302,23 +307,41 @@ class Environment:
         s[N_QUARANTINE] = self.Q + self.Q_move
 
         """ update reward """
-        reward = s[N_GOLD] - ((self.E + self.E_move) * 0.5 + self.I * 0.5) / self._config['N_total']
-        
-        if s[N_QUARANTINE] == self._config['MAX_Q']:
-           
-           reward -= 0.01
 
-        self.update_history(t)
+        delta_S = (- SI - SE - SE_move) / self._config['N_total']
+
+        delta_E = (SI + SE - EI - EQ) / self._config['N_total']
+
+        delta_E_move = (SE_move - EI_move - EQ_move) / self._config['N_total']
+
+        delta_Q = (EQ - QI) / self._config['N_total']
+
+        delta_Q_move = (EQ_move - QI_move) / self._config['N_total']
+
+        delta_I = (EI + EI_move + QI + QI_move - IR) / self._config['N_total']
+
+        # the delta of each seir component is more important in the begining.
+        seir_delta_reward = (5000 / (t + 10)) * (3 * delta_S - 2 * delta_I  - (delta_Q + delta_Q_move)- (delta_E + delta_E_move))
+        
+        # the state of S is more important in the end of period.
+        seir_reward = math.log((t + 31) / 5) * (3 * self.S)
+        
+        # the state of other components in seir model is more important in the begining.
+        seir_reward = (100 / (t + 10)) * (- 2 * self.I - (self.Q + self.Q_move) - (self.E + self.E_move))
+
+        seir_reward /= self._config['N_total']
+
+        reward = s[N_GOLD] + seir_delta_reward + seir_reward
+        
+        self.update_history(t, reward)
         
         if self.R / self._config['N_total'] > 0.95:
 
             self.is_terminal = True
-
         
         self._assert_all(s=s, if_seir=True, if_variable=True)
 
         return s, reward, self.is_terminal
-
 
     def _assert_all(self, s=None, if_config=False, if_variable=False, if_seir=False, if_all=False):
         """ To assert that all values in environment are reasonable.
@@ -398,7 +421,6 @@ class Environment:
 
             assert 0 <= self.Q + self.Q_move < self._config['MAX_Q']
 
-
     def obeserved_state(self, state):
         """ To transform the global state to the obsevable state for agent.
 
@@ -444,7 +466,7 @@ class Environment:
 
             self.gamma_move = max(0, self.gamma_move)
 
-    def update_history(self, t, update_list=['S', 'E', 'E_move', 'Q', 'Q_move', 'I', 'R']):
+    def update_history(self, t, reward, update_list=['S', 'E', 'E_move', 'Q', 'Q_move', 'I', 'R']):
         """ To update history including seir model and other states.
 
         Args:
@@ -455,11 +477,13 @@ class Environment:
 
         self._history['time'].append(t)
 
+        self._history['reward'].append(reward)
+
         for name in update_list:
 
             self._history[name].append(getattr(self, name) / self._config['N_total'])
     
-    def plot_history(self, plot_list=['S', 'E', 'Q', 'I', 'R'], out_path='history.png'):
+    def plot_history(self, plot_list=['S', 'E', 'E_move', 'Q', 'Q_move', 'I', 'R'], out_path='history.png'):
         """ To plot people transmission history line chart.
 
         Args:
@@ -476,6 +500,7 @@ class Environment:
             'R': ('Recovered Population', 'red'),
             'E_move': ('Exposed Population(move)', 'magenta'),
             'Q_move': ('Quarantine Population(move)', 'black'),
+            'reward': ('Reward', 'magenta')
         }
 
         if any(name not in display_config for name in plot_list):
@@ -933,7 +958,7 @@ class Simulatoin:
             value_loss += F.smooth_l1_loss(value, torch.tensor([R], device=device))
 
         loss = policy_loss + value_loss
-        
+
         return loss
 
     def episodes(self, max_episodes=50, max_steps=400, plot=False):
@@ -1029,7 +1054,7 @@ class Simulatoin:
                         actions_probs = self.agent.forward(state_observed)
 
                         action = self.agent.select_actions(actions_probs)
-                
+                    
                     state, reward, is_terminal = self.environment.step(state, action, t=t)
 
                     state_observed = self.environment.obeserved_state(state)
