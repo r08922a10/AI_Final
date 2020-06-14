@@ -20,7 +20,7 @@
     "alpha_eq_move": 0.8,
     "alpha_qi_move": 0.5, 
 
-    "N_total": 23000012,
+    "N_total": 23000130,
     "N_mask": 0.1,
     "N_donate": 2000000,
     "inc_mask": 0.0005,
