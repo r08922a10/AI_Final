@@ -996,7 +996,7 @@ class Simulatoin:
 
             self.optimizer.step()
 
-            if plot and episode:
+            if plot:
 
                 self.environment.plot_history(out_path=f'ep{episode:02d}_history.png')
 
