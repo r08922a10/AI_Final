@@ -12,7 +12,7 @@ import matplotlib as mpl
 mpl.use('Agg')
 import matplotlib.pyplot as plt
 
-np.random.seed(666)
+#np.random.seed(666)
 torch.manual_seed(666)
 
 from constant import *
@@ -641,11 +641,11 @@ class Agent(nn.Module):
 
     def greedy_actions(self, scores):
 
-        #print(scores.size())
-        #exit()
         action = torch.argmax(scores.detach())
 
         action_id = self.legal_actions[action.item()]
+
+        self.update_cooldown(action_id)
 
         return action_id  
     
@@ -810,11 +810,13 @@ class Simulatoin:
 
         self.is_actor_critic = False
 
-    def testing(self, max_steps=200, max_episode=10):
+    def testing(self, max_steps=200, max_episode=10, greedy=True):
 
         self.agent.eval()
 
         reward_total = 0
+
+        actions_list = []
 
         for ep in range(max_episode):
 
@@ -826,11 +828,28 @@ class Simulatoin:
 
             reward_eps = 0
 
+            actions_list.append([])
+
             for t in range(max_steps):
 
                 actions_probs = self.agent.forward(state_observed)
 
-                action = self.agent.greedy_actions(actions_probs)
+                if greedy:
+
+                    action = self.agent.greedy_actions(actions_probs)
+
+                else:
+
+                    if self.is_actor_critic:
+                        
+                        state_values = self.agent.forward_value(state_observed)
+
+                        action = self.agent.select_actions(actions_probs, state_values)
+
+
+                    else:
+
+                        action = self.agent.select_actions(actions_probs)
                 
                 state, reward, is_terminal = self.environment.step(state, action, t=t)
 
@@ -842,6 +861,8 @@ class Simulatoin:
 
                     break
 
+                actions_list[-1].append(action)
+
             reward_total += reward_eps
 
         reward_avg = reward_total / max_episode
@@ -852,7 +873,7 @@ class Simulatoin:
 
         self.agent.train()
 
-        return reward_avg.item()
+        return reward_avg.item(), actions_list
 
 
     def get_baseline(self, max_episodes=50, max_steps=400):
@@ -1135,7 +1156,7 @@ def main():
 
     env = Environment()
 
-    optimizer = optim.Adam(agent.parameters(), lr=1e-3)
+    optimizer = optim.Adam(agent.parameters(), lr=5e-3)
 
     game = Simulatoin(agent, env, optimizer, verbose=True, gamma=0.99)
 
@@ -1143,17 +1164,35 @@ def main():
 
     #game.episodes(max_episodes=100, max_steps=200, plot=False)
 
-    r_0 = game.testing(max_steps=200, max_episode=10)
+    r_0, a_0 = game.testing(max_steps=300, max_episode=50, greedy=True)
+
 
     try:
 
-        game.monti_carlo_estimation(iterations=50, num_rollouts=10, max_steps=200, plot=False)
+        game.monti_carlo_estimation(iterations=50, num_rollouts=20, max_steps=300, plot=False)
     
     except KeyboardInterrupt:
 
         pass
 
-    r_1 = game.testing(max_steps=200, max_episode=10)
+    r_1, a_1 = game.testing(max_steps=300, max_episode=50, greedy=True)
+
+    # Before training
+    print("Iint Model actions taken")
+
+    for n in range(3): # print 3 rollouts of actions
+
+        print(a_0[n][:50]) # action taken in time step 0 ~ 49
+
+
+    # After training
+
+    print("Trained Model actions taken")
+
+    for n in range(3): # print 3 rollouts of actions 
+
+        print(a_1[n][:50]) # actions taken in time step 0 ~ 49
+
 
     print("Init Model {} | Trained Model {} ".format(r_0, r_1))
 
