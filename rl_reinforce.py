@@ -866,10 +866,6 @@ class Simulatoin:
                     else:
 
                         action = self.agent.select_actions(actions_probs)
-
-                if action == SET_OPEN2 and state[N_OPEN] >= 1:
-
-                    print(state_observed[N_OPEN])
                 
                 state, reward, is_terminal = self.environment.step(state, action, t=t)
 
@@ -1184,7 +1180,7 @@ def main():
 
     #game.episodes(max_episodes=100, max_steps=200, plot=False)
 
-    r_0, a_0 = game.testing(max_steps=300, max_episode=50, greedy=False)
+    r_0, a_0 = game.testing(max_steps=300, max_episode=50, greedy=True)
 
 
     try:
@@ -1195,7 +1191,7 @@ def main():
 
         pass
 
-    r_1, a_1 = game.testing(max_steps=300, max_episode=50, greedy=False)
+    r_1, a_1 = game.testing(max_steps=300, max_episode=50, greedy=True)
 
     # Before training
     print("Iint Model actions taken")
