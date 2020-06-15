@@ -652,25 +652,39 @@ class Agent(nn.Module):
     def get_legal_actions(self, state):
 
         
-        if state[N_OPEN] >= 0.5 and SET_OPEN in self.legal_actions:
+        freeze_buffer = set()
 
-            self.legal_actions.remove(SET_OPEN)
+        if state[N_OPEN] >= 0.5:
+            
+            if  SET_OPEN in self.legal_actions:
 
-        elif state[N_OPEN] < 0.5 and SET_OPEN not in self.legal_actions:
+                self.legal_actions.remove(SET_OPEN)
+
+            freeze_buffer.add(SET_OPEN2)
+
+        elif SET_OPEN not in self.legal_actions:
 
             self.legal_actions.append(SET_OPEN)
 
-        if state[N_OPEN] >= 1 and SET_OPEN2 in self.legal_actions:
+        if state[N_OPEN] >= 1:
+            
+            if  SET_OPEN2 in self.legal_actions:
 
-            self.legal_actions.remove(SET_OPEN2)
+                self.legal_actions.remove(SET_OPEN2)
 
-        elif state[N_OPEN] < 1 and SET_OPEN2 not in self.legal_actions:
+            freeze_buffer.add(SET_OPEN2)
+
+        elif SET_OPEN2 not in self.legal_actions:
 
             self.legal_actions.append(SET_OPEN2)
 
-        if state[N_OPEN] == 0 and DEC_OPEN in self.legal_actions:
+        if state[N_OPEN] == 0:
+            
+            if DEC_OPEN in self.legal_actions:
 
-            self.legal_actions.remove(DEC_OPEN)
+                self.legal_actions.remove(DEC_OPEN)
+
+            freeze_buffer.add(DEC_OPEN)
 
         elif state[N_OPEN] > 0 and DEC_OPEN not in self.legal_actions:
 
@@ -678,11 +692,13 @@ class Agent(nn.Module):
         
         for act, cd in self.current_cooldown.items():
 
-            if cd > 0 and act in self.legal_actions:
+            if cd > 0:
 
-                self.legal_actions.remove(act)
+                if act in self.legal_actions:
 
-            elif cd == 0 and act not in self.legal_actions:
+                    self.legal_actions.remove(act)
+
+            elif act not in self.legal_actions and act not in freeze_buffer:
 
                 self.legal_actions.append(act)
 
@@ -1169,7 +1185,7 @@ def main():
 
     try:
 
-        game.monti_carlo_estimation(iterations=50, num_rollouts=20, max_steps=300, plot=False)
+        game.monti_carlo_estimation(iterations=100, num_rollouts=20, max_steps=300, plot=False)
     
     except KeyboardInterrupt:
 
