@@ -238,7 +238,7 @@ class Environment:
 
             s[N_OPEN] -= 0.1
             
-            s[N_OPEN] = max(0, s[N_OPEN]) # should be larger than 0
+            s[N_OPEN] = max(0, np.around(s[N_OPEN].item(), decimals=1)) # should be larger than 0
 
         elif a == SWITCH_SHUTDOWN:
             
@@ -319,7 +319,7 @@ class Environment:
 
         self.R = self.R + IR
 
-        self.E_MAX = max(self.E_MAX, self.E)
+        self.E_MAX = max(self.E_MAX, self.E + self.E_move)
 
         self.I_MAX = max(self.I_MAX, self.I)
         
@@ -364,11 +364,11 @@ class Environment:
 
             reward = 0
 
-            if self.E_MAX > self._danger_threshold:
+            if self.E_MAX / self._config['N_total'] > self._danger_threshold:
 
                 reward -= 20
             
-            elif self.E_MAX > self._warning_threshold:
+            elif self.E_MAX / self._config['N_total'] > self._warning_threshold:
 
                 reward -= 10
             
@@ -376,11 +376,11 @@ class Environment:
                 
                 reward += 50
 
-            if self.I_MAX > self._danger_threshold:
+            if self.I_MAX / self._config['N_total'] > self._danger_threshold:
 
                 reward -= 50
             
-            elif self.I_MAX > self._warning_threshold:
+            elif self.I_MAX / self._config['N_total'] > self._warning_threshold:
                 
                 reward -= 30
             
@@ -546,7 +546,7 @@ class Environment:
 
                 assert pop_rule(getattr(self, name))
 
-            assert self.S + self.E + self.E_move + self.Q + self.Q_move + self.I + self.R <= self._config['N_total']
+            assert self.S + self.E + self.E_move + self.Q + self.Q_move + self.I + self.R == self._config['N_total']
             
             assert 0 <= self.Q + self.Q_move < self._config['MAX_Q']
 
@@ -790,7 +790,7 @@ class Agent(nn.Module):
 
                 self.legal_actions.remove(SET_OPEN)
 
-            freeze_buffer.add(SET_OPEN2)
+            freeze_buffer.add(SET_OPEN)
 
         elif SET_OPEN not in self.legal_actions:
 
