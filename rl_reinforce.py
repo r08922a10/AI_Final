@@ -136,12 +136,12 @@ class Environment:
 
         self._assert_all(if_config=True, if_seir=True)
 
-        self.E_L, self.E_R, self.E_MAX = None, None, float('-inf')
-        self.I_L, self.I_R, self.I_MAX = None, None, float('-inf')
+        self.E_L, self.E_R, self.E_MAX, self.E_t = None, None, float('-inf'), -1
+        self.I_L, self.I_R, self.I_MAX, self.I_t = None, None, float('-inf'), -1
 
         return self.start.clone()
    
-    def step(self, s, a, t):
+    def step(self, s, a, t, test=False):
         """ We need to define this function as the transition function.(SEIR....)
 
         Args:
@@ -319,9 +319,17 @@ class Environment:
 
         self.R = self.R + IR
 
-        self.E_MAX = max(self.E_MAX, self.E + self.E_move)
+        if self.E + self.E_move > self.E_MAX:
 
-        self.I_MAX = max(self.I_MAX, self.I)
+            self.E_MAX = self.E + self.E_move
+
+            self.E_t = t
+
+        if self.I > self.I_MAX:
+
+            self.I_MAX = self.I
+
+            self.I_t = t
         
         s[N_QUARANTINE] = self.Q + self.Q_move
 
@@ -358,9 +366,7 @@ class Environment:
 
         # reward = s[N_GOLD] + seir_delta_reward + seir_reward
         
-        self.update_history(t, reward)
-        
-        if self.R / self._config['N_total'] > 0.9:
+        if self.R / self._config['N_total'] > 0.9 and not test:
 
             reward = 0
 
@@ -392,17 +398,19 @@ class Environment:
         
         self._assert_all(s=s, if_seir=True, if_variable=True)
 
+        self.update_history(t, a, reward)
+
         return s, reward, self.is_terminal
 
     def reward(self, t):
 
         reward = 0
 
-        if self.E / self._config['N_total'] > 0.2 and self.E_L == None:
+        if self.E / self._config['N_total'] > self._warning_threshold and self.E_L == None:
 
             self.E_L = t
         
-        if self.E / self._config['N_total'] < 0.2 and self.E_L != None and self.E_R == None:
+        if self.E / self._config['N_total'] < self._warning_threshold and self.E_L != None and self.E_R == None:
 
             self.E_R = t
 
@@ -416,11 +424,11 @@ class Environment:
             reward -= 1
         
 
-        if self.I / self._config['N_total'] > 0.2 and self.I_L == None:
+        if self.I / self._config['N_total'] > self._warning_threshold and self.I_L == None:
 
             self.I_L = t
         
-        if self.I / self._config['N_total'] < 0.2 and self.I_L != None and self.I_R == None:
+        if self.I / self._config['N_total'] < self._warning_threshold and self.I_L != None and self.I_R == None:
 
             self.I_R = t
 
@@ -595,7 +603,7 @@ class Environment:
 
             self.gamma_move = max(0, self.gamma_move)
 
-    def update_history(self, t, reward, update_list=['S', 'E', 'E_move', 'Q', 'Q_move', 'I', 'R']):
+    def update_history(self, t, action, reward, update_list=['S', 'E', 'E_move', 'Q', 'Q_move', 'I', 'R']):
         """ To update history including seir model and other states.
 
         Args:
@@ -608,11 +616,13 @@ class Environment:
 
         self._history['reward'].append(reward)
 
+        self._history['action'].append(action)
+
         for name in update_list:
 
             self._history[name].append(getattr(self, name) / self._config['N_total'])
     
-    def plot_history(self, plot_list=['S', 'E', 'E_move', 'Q', 'Q_move', 'I', 'R'], out_path='history.png'):
+    def plot_history(self, plot_list=['S', 'E', 'I', 'R'], out_path='history.png', truncate=-1, staggered=True, annotate_action=False):
         """ To plot people transmission history line chart.
 
         Args:
@@ -636,15 +646,23 @@ class Environment:
 
             raise Exception('Please check each element in plot list must be set in displaying config.')
 
-        fig = plt.figure(out_path)
+        if annotate_action:
+
+            figsize = (15, 5)
+        
+        else:
+
+            figsize = (6, 4)
+
+        fig = plt.figure(out_path, figsize=figsize, dpi=400)
 
         history_fig = fig.add_subplot(111)
 
         for name in plot_list:
 
             history_fig.plot('time', 'number', '-', color=display_config[name][1], data={
-                'time': self._history['time'],
-                'number': self._history[name]})
+                'time': self._history['time'][:truncate],
+                'number': self._history[name][:truncate]})
         
         plt.axhline(y=self._danger_threshold, color='r', linestyle='--')
 
@@ -659,13 +677,35 @@ class Environment:
 
         history_fig.set_title('SEIR')
 
+        if annotate_action:
+
+            flag = 1
+
+            for t, action in enumerate(self._history['action'][:truncate]):
+
+                if action != NO_ACTION:
+
+                    if flag == 1 or not staggered:
+                    
+                        history_fig.text(t, -0.05, ACTIONS[action], fontsize=7, rotation=45, verticalalignment='bottom', horizontalalignment='left')
+                    
+                    else:
+                    
+                        history_fig.text(t, -0.05, ACTIONS[action], fontsize=7, rotation=-45, verticalalignment='top', horizontalalignment='left')
+                    
+                    flag = 1 - flag
+
         fig.savefig(out_path)
+
+        plt.close(fig)
 
     def print_state(self, t, print_list=['S', 'E', 'E_move', 'Q', 'Q_move', 'I', 'R']):
 
-        log = f'{t}\t'
+        log = f'{t:3d} '
 
-        log += '\t'.join([f'{name}: {getattr(self, name)}' for name in print_list])
+        log += '\t'.join([f'{name}: {int(getattr(self, name)):>8d}' for name in print_list])
+
+        log += f'\tsc: {self.evaluation():>4.2f}'
 
         print(log)
     
@@ -879,6 +919,7 @@ class GRUAgent(Agent):
 
         return F.softmax(scores, dim=0)
 
+
 class ActorCriticAgent(GRUAgent):
 
     def __init__(self, dim_input, dim_output, max_actions, init_legal_actions, cooldown_criteria):
@@ -1005,7 +1046,7 @@ class Simulatoin:
 
                         action = self.agent.select_actions(actions_probs)
                 
-                state, reward, is_terminal = self.environment.step(state, action, t=t)
+                state, reward, is_terminal = self.environment.step(state, action, t=t, test=True)
 
                 reward_eps+=reward
 
@@ -1029,7 +1070,7 @@ class Simulatoin:
 
                 out_path += f'ep{ep:02d}_history.png'
 
-                self.environment.plot_history(out_path=out_path)
+                self.environment.plot_history(out_path=out_path, truncate=self.environment.I_t, annotate_action=load)
 
             reward_total += reward_eps
 
@@ -1146,11 +1187,21 @@ class Simulatoin:
 
         v = 0   # V_T = 0
 
+        t = 0
+
         for r in self.agent.rewards[::-1]:   # r_T, r_{T-1}, .....r_0
 
-            v = r + self.gamma * v
+            if t < 120:
+
+                v = 0 * r
+            
+            else:
+            
+                v = r + self.gamma * v
 
             accumulated_rewards.insert(0, v)
+            
+            t += 1
 
         accumulated_rewards = torch.tensor(accumulated_rewards, device=device)
 
@@ -1254,7 +1305,7 @@ class Simulatoin:
 
                 self.environment.plot_history(out_path=f'ep{episode:02d}_history.png')
 
-    def monti_carlo_estimation(self, iterations=3, num_rollouts=5, max_steps=400, early_stop=10, plot=False):
+    def monti_carlo_estimation(self, iterations=3, num_rollouts=5, max_steps=400, early_stop=30, plot=False):
 
         local_best = float('-inf')
 
@@ -1291,7 +1342,7 @@ class Simulatoin:
                         actions_probs = self.agent.forward(state_observed)
 
                         action = self.agent.select_actions(actions_probs)
-                    
+  
                     state, reward, is_terminal = self.environment.step(state, action, t=t)
 
                     state_observed = self.environment.obeserved_state(state)
@@ -1300,8 +1351,8 @@ class Simulatoin:
 
                     total_reward += reward
 
-                    if is_terminal:
-
+                    if is_terminal: 
+                        
                         break
                 
                 total_score += self.environment.evaluation()
@@ -1341,7 +1392,7 @@ class Simulatoin:
 
             if self.verbose:
 
-                print("(MC) Iteration {:>3d} | Avg Loss {:>8.2f} | Avg Total Reward {:>8.2f} | Avg Score {:>8.2f}".format(i, loss_i.item(), total_reward.item(), total_score))
+                print("(MC) Iteration {:>3d} | Avg Loss {:>8.2f} | Avg Total Reward {:>8.2f} | Avg Score {:>8.2f}".format(i, loss_i.item(), total_reward, total_score))
 
             loss_i.backward()
 
@@ -1379,8 +1430,9 @@ def main():
         "cooldown_criteria": cooldown_criteria
     }
 
-    #agent = Agent(**args_agent).to(device)
-    #agent = GRUAgent(**args_agent).to(device)
+    # agent = Agent(**args_agent).to(device)
+
+    # agent = GRUAgent(**args_agent).to(device)
 
     agent = ActorCriticAgent(**args_agent).to(device)
 
