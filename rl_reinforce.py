@@ -238,7 +238,7 @@ class Environment:
 
             s[N_OPEN] -= 0.1
             
-            s[N_OPEN] = max(0, np.around(s[N_OPEN], decimals=1)) # should be larger than 0
+            s[N_OPEN] = max(0, np.around(s[N_OPEN].item(), decimals=1)) # should be larger than 0
 
         elif a == SWITCH_SHUTDOWN:
             
