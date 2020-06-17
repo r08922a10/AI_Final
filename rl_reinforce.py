@@ -136,8 +136,8 @@ class Environment:
 
         self._assert_all(if_config=True, if_seir=True)
 
-        self.E_L, self.E_R, self.E_MAX, self.E_t = None, None, float('-inf'), 0
-        self.I_L, self.I_R, self.I_MAX, self.I_t = None, None, float('-inf'), 0
+        self.E_L, self.E_R, self.E_MAX, self.E_t = None, None, float('-inf'), -1
+        self.I_L, self.I_R, self.I_MAX, self.I_t = None, None, float('-inf'), -1
 
         return self.start.clone()
    
@@ -238,7 +238,7 @@ class Environment:
 
             s[N_OPEN] -= 0.1
             
-            s[N_OPEN] = max(0, s[N_OPEN]) # should be larger than 0
+            s[N_OPEN] = max(0, np.around(s[N_OPEN].item(), decimals=1)) # should be larger than 0
 
         elif a == SWITCH_SHUTDOWN:
             
@@ -554,7 +554,7 @@ class Environment:
 
                 assert pop_rule(getattr(self, name))
 
-            assert self.S + self.E + self.E_move + self.Q + self.Q_move + self.I + self.R <= self._config['N_total']
+            assert self.S + self.E + self.E_move + self.Q + self.Q_move + self.I + self.R == self._config['N_total']
             
             assert 0 <= self.Q + self.Q_move < self._config['MAX_Q']
 
@@ -622,7 +622,7 @@ class Environment:
 
             self._history[name].append(getattr(self, name) / self._config['N_total'])
     
-    def plot_history(self, plot_list=['S', 'E', 'I', 'R'], out_path='history.png', truncate=-1, annotate_action=True):
+    def plot_history(self, plot_list=['S', 'E', 'I', 'R'], out_path='history.png', truncate=-1, staggered=True, annotate_action=False):
         """ To plot people transmission history line chart.
 
         Args:
@@ -679,11 +679,21 @@ class Environment:
 
         if annotate_action:
 
+            flag = 1
+
             for t, action in enumerate(self._history['action'][:truncate]):
 
                 if action != NO_ACTION:
 
-                        history_fig.text(t, -0.05, ACTIONS[action], fontsize=6, rotation=45, verticalalignment='bottom', horizontalalignment='left')
+                    if flag == 1 or not staggered:
+                    
+                        history_fig.text(t, -0.05, ACTIONS[action], fontsize=7, rotation=45, verticalalignment='bottom', horizontalalignment='left')
+                    
+                    else:
+                    
+                        history_fig.text(t, -0.05, ACTIONS[action], fontsize=7, rotation=-45, verticalalignment='top', horizontalalignment='left')
+                    
+                    flag = 1 - flag
 
         fig.savefig(out_path)
 
@@ -1181,7 +1191,7 @@ class Simulatoin:
 
         for r in self.agent.rewards[::-1]:   # r_T, r_{T-1}, .....r_0
 
-            if t < self.environment.I_t:
+            if t < 120:
 
                 v = 0 * r
             
@@ -1339,10 +1349,10 @@ class Simulatoin:
 
                     self.agent.rewards.append(reward)
 
-                    if is_terminal:
-                        
-                        total_reward += reward
+                    total_reward += reward
 
+                    if is_terminal: 
+                        
                         break
                 
                 total_score += self.environment.evaluation()
@@ -1438,8 +1448,8 @@ def main():
 
 
     try:
-        # game.episodes(max_episodes=1000, max_steps=300, plot=False)
-        game.monti_carlo_estimation(iterations=150, num_rollouts=20, max_steps=300, plot=False)
+        # game.episodes(max_episodes=1000, max_steps=200, plot=False)
+        game.monti_carlo_estimation(iterations=100, num_rollouts=20, max_steps=300, plot=False)
     
     except KeyboardInterrupt:
 
