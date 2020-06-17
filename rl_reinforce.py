@@ -335,7 +335,7 @@ class Environment:
 
         """ update reward """
         
-        reward = s[N_GOLD]
+        reward = 0 * s[N_GOLD]
 
         if self._immediate_reward:
 
@@ -368,31 +368,31 @@ class Environment:
         
         if self.R / self._config['N_total'] > 0.9 and not test:
 
-            reward = 0
+            reward = self.evaluation()
 
-            if self.E_MAX / self._config['N_total'] > self._danger_threshold:
+            # if self.E_MAX / self._config['N_total'] > self._danger_threshold:
 
-                reward -= 20
+            #     reward -= 20
             
-            elif self.E_MAX / self._config['N_total'] > self._warning_threshold:
+            # elif self.E_MAX / self._config['N_total'] > self._warning_threshold:
 
-                reward -= 10
+            #     reward -= 10
             
-            else:
+            # else:
                 
-                reward += 50
+            #     reward += 50
 
-            if self.I_MAX / self._config['N_total'] > self._danger_threshold:
+            # if self.I_MAX / self._config['N_total'] > self._danger_threshold:
 
-                reward -= 50
+            #     reward -= 50
             
-            elif self.I_MAX / self._config['N_total'] > self._warning_threshold:
+            # elif self.I_MAX / self._config['N_total'] > self._warning_threshold:
                 
-                reward -= 30
+            #     reward -= 30
             
-            else:
+            # else:
 
-                reward += 100
+            #     reward += 100
 
             self.is_terminal = True
         
@@ -989,6 +989,8 @@ class Simulatoin:
 
         self.environment = environment
 
+        self.testing_environment = Environment(config_path='config_test.json')
+
         self.gamma = gamma
 
         self.optimizer = optimizer
@@ -999,7 +1001,7 @@ class Simulatoin:
 
         self.is_actor_critic = False
 
-    def testing(self, max_steps=300, max_episode=10, greedy=True, load=False):
+    def testing(self, max_steps=300, max_episode=1, greedy=True, load=False, plot=True, verbose=True):
 
         if load:
 
@@ -1017,9 +1019,9 @@ class Simulatoin:
 
             self.agent.init_agent()
 
-            state = self.environment.init_state(test=True)
+            state = self.testing_environment.init_state(test=True)
 
-            state_observed = self.environment.obeserved_state(state)
+            state_observed = self.testing_environment.obeserved_state(state)
 
             reward_eps = 0
 
@@ -1046,11 +1048,11 @@ class Simulatoin:
 
                         action = self.agent.select_actions(actions_probs)
                 
-                state, reward, is_terminal = self.environment.step(state, action, t=t, test=True)
+                state, reward, is_terminal = self.testing_environment.step(state, action, t=t, test=True)
 
-                reward_eps+=reward
+                reward_eps += reward
 
-                state_observed = self.environment.obeserved_state(state)
+                state_observed = self.testing_environment.obeserved_state(state)
 
                 if is_terminal:
 
@@ -1058,7 +1060,7 @@ class Simulatoin:
 
                 actions_list[-1].append(action)
             
-            if ep % 10 == 0:
+            if ep % 10 == 0 and plot:
 
                 if load == False:
 
@@ -1070,17 +1072,17 @@ class Simulatoin:
 
                 out_path += f'ep{ep:02d}_history.png'
 
-                self.environment.plot_history(out_path=out_path, truncate=self.environment.I_t, annotate_action=load)
+                self.testing_environment.plot_history(out_path=out_path, truncate=self.testing_environment.I_t, annotate_action=load)
 
             reward_total += reward_eps
 
-            score_total += self.environment.evaluation()
+            score_total += self.testing_environment.evaluation()
 
         reward_avg = reward_total / max_episode
 
         score_avg = score_total / max_episode
 
-        if self.verbose:
+        if verbose:
 
             print("(Testing) Avg Reward {:>6.2f} | Avg Score {:>6.2f}".format(reward_avg, score_avg))
 
@@ -1187,13 +1189,19 @@ class Simulatoin:
 
         v = 0   # V_T = 0
 
+        v_T = self.agent.rewards[-1]
+
         t = 0
 
         for r in self.agent.rewards[::-1]:   # r_T, r_{T-1}, .....r_0
 
-            if t < 120:
+            if t < 300 - 150:
 
                 v = 0 * r
+            
+            elif t == 300 - 150:
+
+                v = v_T
             
             else:
             
@@ -1207,11 +1215,19 @@ class Simulatoin:
 
         accumulated_rewards = (accumulated_rewards - accumulated_rewards.mean()) / (accumulated_rewards.std() + 1e-9)
 
+        t = 0
+        
         for log_prob, R, value in zip(self.agent.log_probs, accumulated_rewards, self.agent.state_values):
             
+            if t >= 150:
+
+                break
+
             policy_loss += (-log_prob * (R - value.item()) )
 
             value_loss += F.smooth_l1_loss(value, torch.tensor([R], device=device))
+
+            t += 1
 
         loss = policy_loss + value_loss
 
@@ -1275,9 +1291,11 @@ class Simulatoin:
 
                 loss_eps = self.episodic_policy_loss()
 
+            _, test_score, _ = self.testing(max_steps=max_steps, greedy=True, plot=False, verbose=False)
+
             if self.verbose:
 
-                print("Episode {:>3d} | Loss {:>6.2f} | Total Reward {:>6.2f} | Avg Score {:>8.2f}".format(episode, loss_eps.item(), reward_eps, score_eps))
+                print("Episode {:>3d} | Loss {:>6.2f} | Train Score {:>6.2f} | Test Score {:>6.2f}".format(episode, loss_eps.item(), score_eps, test_score))
 
             self.optimizer.zero_grad()
             
@@ -1285,11 +1303,11 @@ class Simulatoin:
 
             self.optimizer.step()
 
-            if score_eps > local_best:
+            if test_score > local_best:
 
                 self.save_agent()
 
-                local_best = score_eps
+                local_best = test_score
 
                 early_stop_flag = 0
             
@@ -1315,9 +1333,9 @@ class Simulatoin:
 
             loss_i = 0
 
-            total_reward = 0
+            train_reward = 0
 
-            total_score = 0
+            train_score = 0
 
             for _ in range(num_rollouts):
 
@@ -1349,13 +1367,11 @@ class Simulatoin:
 
                     self.agent.rewards.append(reward)
 
-                    total_reward += reward
+                    train_reward += reward
 
                     if is_terminal: 
                         
                         break
-                
-                total_score += self.environment.evaluation()
 
                 if self.is_actor_critic:
 
@@ -1364,19 +1380,22 @@ class Simulatoin:
                 else:
 
                     loss_i += self.episodic_policy_loss()
-            
+
+                train_score += self.environment.evaluation()
+
+            _, test_score, _ = self.testing(max_steps=max_steps, greedy=True, plot=False, verbose=False)
 
             loss_i /= num_rollouts
 
-            total_reward /= num_rollouts
+            train_reward /= num_rollouts
 
-            total_score /= num_rollouts
+            train_score /= num_rollouts
 
-            if total_score > local_best:
+            if test_score > local_best:
 
                 self.save_agent()
 
-                local_best = total_score
+                local_best = test_score
 
                 early_stop_flag = 0
             
@@ -1392,7 +1411,7 @@ class Simulatoin:
 
             if self.verbose:
 
-                print("(MC) Iteration {:>3d} | Avg Loss {:>8.2f} | Avg Total Reward {:>8.2f} | Avg Score {:>8.2f}".format(i, loss_i.item(), total_reward, total_score))
+                print("(MC) Iteration {:>3d} | Avg Loss {:>8.2f} | Train Score {:>8.2f} | Test Score {:>8.2f}".format(i, loss_i.item(), train_score, test_score))
 
             loss_i.backward()
 
@@ -1438,7 +1457,7 @@ def main():
 
     env = Environment()
 
-    optimizer = optim.Adam(agent.parameters(), lr=1e-2)
+    optimizer = optim.Adam(agent.parameters(), lr=5e-3)
 
     game = Simulatoin(agent, env, optimizer, verbose=True, gamma=0.99)
 
@@ -1446,10 +1465,9 @@ def main():
 
     r_0, s_0, a_0 = game.testing(max_steps=300, max_episode=50, greedy=False)
 
-
     try:
         # game.episodes(max_episodes=1000, max_steps=200, plot=False)
-        game.monti_carlo_estimation(iterations=100, num_rollouts=20, max_steps=300, plot=False)
+        game.monti_carlo_estimation(iterations=100, num_rollouts=5, max_steps=300, plot=False)
     
     except KeyboardInterrupt:
 
