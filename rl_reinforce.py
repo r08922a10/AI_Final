@@ -44,7 +44,6 @@ class Environment:
         gamma_detect_move: the factor of mask trade to affect COVID detection(move)
         gamma_move: the factor of moving to affect population of moving
         gamma_shut: the factor of shutdown to affect infectious degree
-
         move_w: the weight to affect the factor of moving(gamma_move)
         move_b: the bias to affect the factor of moving(gamma_move)
     Methods
@@ -77,7 +76,6 @@ class Environment:
         """ Load the environment configuration.
         Returns:
             The dictionary of environment configuration.
-
         """
         try:
 
@@ -94,7 +92,6 @@ class Environment:
         """ We need to define this function to initialize the environment.
         Returns:
             The starting state of the environment
-
         """
         if test:
             
@@ -136,14 +133,15 @@ class Environment:
 
         self._assert_all(if_config=True, if_seir=True)
 
-        self.E_L, self.E_R, self.E_MAX = None, None, float('-inf')
-        self.I_L, self.I_R, self.I_MAX = None, None, float('-inf')
+        self.E_L, self.E_R, self.E_MAX, self.E_t = None, None, float('-inf'), -1
+        self.I_L, self.I_R, self.I_MAX, self.I_t = None, None, float('-inf'), -1
+
+        self.min_GOLD = self._config['N_gold']
 
         return self.start.clone()
    
-    def step(self, s, a, t):
+    def step(self, s, a, t, max_step, test=False):
         """ We need to define this function as the transition function.(SEIR....)
-
         Args:
             s: current state
                 0: N_MASK, number of masks
@@ -152,7 +150,6 @@ class Environment:
                 3: IF_SHUTDOWN, 1: shutdown / 0: not shutdown
                 4: IF_MOVE_CONTROL, 1: moving control / 0: moveing free
                 5: N_GOLDnumber of gold
-
             a: action taken by agent in current state
                 0: TRADE_MASK, Trade masks
                 1: SET_OPEN, set openness to 0.5 (current openness should be smaller than 0.5)
@@ -162,11 +159,9 @@ class Environment:
                 5: SWITCH_MOVE_CONTROL, switch moving mode
                 6: NO_ACTION, do nothing
             t: timestep
-
         Returns:
             next_sate: The next state (aka  s' ) given by s and a .
             reward of (s, a, s')
-
         """
         
         """ update state """
@@ -251,6 +246,10 @@ class Environment:
             if s[IF_MOVE_CONTROL] == 1:
 
                 s[N_GOLD] -= self._config['inc_move']
+                
+                if s[N_GOLD] < 0:
+
+                    s[N_GOLD] = 0
 
             else:
 
@@ -259,6 +258,8 @@ class Environment:
         self.update_gamma_mask(s)
 
         self.update_gamma_move(s, t)
+
+        self.min_GOLD = min(self.min_GOLD, s[N_GOLD].item())
         
         """ update SEIR """
         beta = self.gamma_mask * self._config['beta']
@@ -319,78 +320,39 @@ class Environment:
 
         self.R = self.R + IR
 
-        self.E_MAX = max(self.E_MAX, self.E + self.E_move)
+        if self.E + self.E_move > self.E_MAX:
 
-        self.I_MAX = max(self.I_MAX, self.I)
+            self.E_MAX = self.E + self.E_move
+
+            self.E_t = t
+
+        if self.I > self.I_MAX:
+
+            self.I_MAX = self.I
+
+            self.I_t = t
         
         s[N_QUARANTINE] = self.Q + self.Q_move
 
+        self.update_LR(t)
+
         """ update reward """
         
-        reward = s[N_GOLD]
+        reward = 0 
 
         if self._immediate_reward:
 
             reward += self.reward(t)
 
-        # delta_S = (- SI - SE - SE_move) / self._config['N_total']
+        if (self.R / self._config['N_total'] or t == max_step - 1)> 0.9 and not test:
 
-        # delta_E = (SI + SE - EI - EQ) / self._config['N_total']
-
-        # delta_E_move = (SE_move - EI_move - EQ_move) / self._config['N_total']
-
-        # delta_Q = (EQ - QI) / self._config['N_total']
-
-        # delta_Q_move = (EQ_move - QI_move) / self._config['N_total']
-
-        # delta_I = (EI + EI_move + QI + QI_move - IR) / self._config['N_total']
-
-        # the delta of each seir component is more important in the begining.
-        # seir_delta_reward = (5000 / (t + 10)) * (3 * delta_S - 2 * delta_I  - (delta_Q + delta_Q_move)- (delta_E + delta_E_move))
-        
-        # the state of S is more important in the end of period.
-        # seir_reward = math.log((t + 31) / 5) * (3 * self.S)
-        
-        # the state of other components in seir model is more important in the begining.
-        # seir_reward = (100 / (t + 10)) * (- 2 * self.I - (self.Q + self.Q_move) - (self.E + self.E_move))
-
-        # seir_reward /= self._config['N_total']
-
-        # reward = s[N_GOLD] + seir_delta_reward + seir_reward
-        
-        self.update_history(t, reward)
-        
-        if self.R / self._config['N_total'] > 0.9:
-
-            reward = 0
-
-            if self.E_MAX / self._config['N_total'] > self._danger_threshold:
-
-                reward -= 20
-            
-            elif self.E_MAX / self._config['N_total'] > self._warning_threshold:
-
-                reward -= 10
-            
-            else:
-                
-                reward += 50
-
-            if self.I_MAX / self._config['N_total'] > self._danger_threshold:
-
-                reward -= 50
-            
-            elif self.I_MAX / self._config['N_total'] > self._warning_threshold:
-                
-                reward -= 30
-            
-            else:
-
-                reward += 100
+            reward = self.global_reward()
 
             self.is_terminal = True
         
         self._assert_all(s=s, if_seir=True, if_variable=True)
+
+        self.update_history(t, a, reward)
 
         return s, reward, self.is_terminal
 
@@ -398,11 +360,11 @@ class Environment:
 
         reward = 0
 
-        if self.E / self._config['N_total'] > 0.2 and self.E_L == None:
+        if self.E / self._config['N_total'] > self._warning_threshold and self.E_L == None:
 
             self.E_L = t
         
-        if self.E / self._config['N_total'] < 0.2 and self.E_L != None and self.E_R == None:
+        if self.E / self._config['N_total'] < self._warning_threshold and self.E_L != None and self.E_R == None:
 
             self.E_R = t
 
@@ -416,11 +378,11 @@ class Environment:
             reward -= 1
         
 
-        if self.I / self._config['N_total'] > 0.2 and self.I_L == None:
+        if self.I / self._config['N_total'] > self._warning_threshold and self.I_L == None:
 
             self.I_L = t
         
-        if self.I / self._config['N_total'] < 0.2 and self.I_L != None and self.I_R == None:
+        if self.I / self._config['N_total'] < self._warning_threshold and self.I_L != None and self.I_R == None:
 
             self.I_R = t
 
@@ -441,9 +403,18 @@ class Environment:
         return reward
 
     def evaluation(self):
+        E_peak, I_peak = self.peak_eval()
+
+        E_interval, I_interval = self.interval_eval()
         
+        gold_change = self.gold_eval()
+        
+        return ' | '.join([E_peak, I_peak, E_interval, I_interval, gold_change])
+        
+    def global_reward(self):
         score = 0
 
+        # E peak
         if self.E_MAX / self._config['N_total'] < self._warning_threshold:
         
             score += 1
@@ -456,6 +427,7 @@ class Environment:
 
             score -= 5
         
+        # I peak
         if self.I_MAX / self._config['N_total'] < self._warning_threshold:
         
             score += 2
@@ -468,11 +440,99 @@ class Environment:
 
             score -= 10
 
+        # minimum GOLD
+        if self.min_GOLD == self._config['N_gold']:
+            
+            score += 1
+
+        elif self.min_GOLD > self._config['N_gold'] - self._config['inc_move']:
+
+            score -= 0.5
+
+        elif self.min_GOLD > 0:
+
+            score -= 1
+        
+        else:
+
+            score -= 2
+
         return score
+
+    def peak_eval(self):
+
+        # E peak
+        E_peak = "E peak  "
+
+        if self.E_MAX / self._config['N_total'] < self._warning_threshold:
+        
+            E_peak += "safe   "
+        
+        elif self.E_MAX / self._config['N_total'] < self._danger_threshold:
+
+            E_peak += "warning"
+        
+        else:
+
+            E_peak += "danger "
+
+        # I peak
+        I_peak = "I peak  "
+
+        if self.I_MAX / self._config['N_total'] < self._warning_threshold:
+        
+            I_peak += "safe   "
+        
+        elif self.I_MAX / self._config['N_total'] < self._danger_threshold:
+
+            I_peak += "warning"
+        
+        else:
+
+            I_peak += "danger "
+
+        return E_peak, I_peak
+        
+    def update_LR(self, t):
+        if self.E / self._config['N_total'] > self._warning_threshold and self.E_L == None:
+
+            self.E_L = t
+        
+        if self.E / self._config['N_total'] < self._warning_threshold and self.E_L != None and self.E_R == None:
+
+            self.E_R = t
+
+        if self.I / self._config['N_total'] > self._warning_threshold and self.I_L == None:
+
+            self.I_L = t
+        
+        if self.I / self._config['N_total'] < self._warning_threshold and self.I_L != None and self.I_R == None:
+
+            self.I_R = t
+
+    
+    def interval_eval(self):
+        
+        E_interval = 0
+
+        if self.E_L is not None:
+
+            E_interval = self.E_R - self.E_L
+
+        I_interval = 0
+        
+        if self.I_L is not None:
+            
+            I_interval = self.I_R - self.I_L
+
+        return 'E interval {:>3d}'.format(E_interval), 'I interval {:>3d}'.format(I_interval)
+
+    def gold_eval(self):
+
+        return 'gold change {:>2.2f}'.format(np.around(self._config['N_gold'] - self.min_GOLD, decimals=2))
 
     def _assert_all(self, s=None, if_config=False, if_variable=False, if_seir=False, if_all=False):
         """ To assert that all values in environment are reasonable.
-
         Args:
             s: the state you want to assert values. Note that only required when if_variable is True.
             if_config: if True assert all configs in initialization file are reasonable. 
@@ -552,13 +612,11 @@ class Environment:
 
     def obeserved_state(self, state):
         """ To transform the global state to the obsevable state for agent.
-
         Args:
             state : global state
      
         Returns:
             observed_state : obsevable state for agent
-
         """
         observed_state = torch.zeros(7).to(device)
         observed_state[:5] = state[:5].clone()
@@ -568,10 +626,8 @@ class Environment:
     
     def update_gamma_mask(self, s):
         """ To update gamma_mask via openness and max of masks constant.
-
         Args:
             s : global state
-
         """
         self.gamma_mask = (1 - 0.8 * s[N_OPEN]) * self._config['MAX_mask'] / s[N_MASK]
        
@@ -579,11 +635,9 @@ class Environment:
 
     def update_gamma_move(self, s, t):
         """ To update gamma_move in two different way according to timestep.
-
         Args:
             s : global state
             t : timestep
-
         """
         if t <= self._config['early_threshold']:
 
@@ -595,31 +649,29 @@ class Environment:
 
             self.gamma_move = max(0, self.gamma_move)
 
-    def update_history(self, t, reward, update_list=['S', 'E', 'E_move', 'Q', 'Q_move', 'I', 'R']):
+    def update_history(self, t, action, reward, update_list=['S', 'E', 'E_move', 'Q', 'Q_move', 'I', 'R']):
         """ To update history including seir model and other states.
-
         Args:
             s : global state
             t : timestep
-
         """
 
         self._history['time'].append(t)
 
         self._history['reward'].append(reward)
 
+        self._history['action'].append(action)
+
         for name in update_list:
 
             self._history[name].append(getattr(self, name) / self._config['N_total'])
     
-    def plot_history(self, plot_list=['S', 'E', 'E_move', 'Q', 'Q_move', 'I', 'R'], out_path='history.png'):
+    def plot_history(self, plot_list=['S', 'E', 'I', 'R'], out_path='history.png', truncate=-1, staggered=True, annotate_action=False):
         """ To plot people transmission history line chart.
-
         Args:
             plot_list:  plot the attributes in this class.
                         please make sure you have store the attributes in update_history
             out_path: save figure to the path.
-
         """
         display_config = {
             'S': ('Susceptible', 'blue'),
@@ -636,15 +688,23 @@ class Environment:
 
             raise Exception('Please check each element in plot list must be set in displaying config.')
 
-        fig = plt.figure(out_path)
+        if annotate_action:
+
+            figsize = (15, 5)
+        
+        else:
+
+            figsize = (6, 4)
+
+        fig = plt.figure(out_path, figsize=figsize, dpi=400)
 
         history_fig = fig.add_subplot(111)
 
         for name in plot_list:
 
             history_fig.plot('time', 'number', '-', color=display_config[name][1], data={
-                'time': self._history['time'],
-                'number': self._history[name]})
+                'time': self._history['time'][:truncate],
+                'number': self._history[name][:truncate]})
         
         plt.axhline(y=self._danger_threshold, color='r', linestyle='--')
 
@@ -659,13 +719,35 @@ class Environment:
 
         history_fig.set_title('SEIR')
 
+        if annotate_action:
+
+            flag = 1
+
+            for t, action in enumerate(self._history['action'][:truncate]):
+
+                if action != NO_ACTION:
+
+                    if flag == 1 or not staggered:
+                    
+                        history_fig.text(t, -0.05, ACTIONS[action], fontsize=7, rotation=45, verticalalignment='bottom', horizontalalignment='left')
+                    
+                    else:
+                    
+                        history_fig.text(t, -0.05, ACTIONS[action], fontsize=7, rotation=-45, verticalalignment='top', horizontalalignment='left')
+                    
+                    flag = 1 - flag
+
         fig.savefig(out_path)
+
+        plt.close(fig)
 
     def print_state(self, t, print_list=['S', 'E', 'E_move', 'Q', 'Q_move', 'I', 'R']):
 
-        log = f'{t}\t'
+        log = f'{t:3d} '
 
-        log += '\t'.join([f'{name}: {getattr(self, name)}' for name in print_list])
+        log += '\t'.join([f'{name}: {int(getattr(self, name)):>8d}' for name in print_list])
+
+        log += f'\tsc: {self.global_reward():>4.2f}'
 
         print(log)
     
@@ -879,6 +961,7 @@ class GRUAgent(Agent):
 
         return F.softmax(scores, dim=0)
 
+
 class ActorCriticAgent(GRUAgent):
 
     def __init__(self, dim_input, dim_output, max_actions, init_legal_actions, cooldown_criteria):
@@ -948,6 +1031,8 @@ class Simulatoin:
 
         self.environment = environment
 
+        self.testing_environment = Environment(config_path='config_test.json')
+
         self.gamma = gamma
 
         self.optimizer = optimizer
@@ -958,7 +1043,7 @@ class Simulatoin:
 
         self.is_actor_critic = False
 
-    def testing(self, max_steps=300, max_episode=10, greedy=True, load=False):
+    def testing(self, max_steps=300, max_episode=1, greedy=True, load=False, plot=True, verbose=True):
 
         if load:
 
@@ -976,9 +1061,9 @@ class Simulatoin:
 
             self.agent.init_agent()
 
-            state = self.environment.init_state(test=True)
+            state = self.testing_environment.init_state(test=True)
 
-            state_observed = self.environment.obeserved_state(state)
+            state_observed = self.testing_environment.obeserved_state(state)
 
             reward_eps = 0
 
@@ -1005,11 +1090,11 @@ class Simulatoin:
 
                         action = self.agent.select_actions(actions_probs)
                 
-                state, reward, is_terminal = self.environment.step(state, action, t=t)
+                state, reward, is_terminal = self.testing_environment.step(state, action, t=t, max_step=max_steps, test=True)
 
-                reward_eps+=reward
+                reward_eps += reward
 
-                state_observed = self.environment.obeserved_state(state)
+                state_observed = self.testing_environment.obeserved_state(state)
 
                 if is_terminal:
 
@@ -1017,7 +1102,7 @@ class Simulatoin:
 
                 actions_list[-1].append(action)
             
-            if ep % 10 == 0:
+            if ep % 10 == 0 and plot:
 
                 if load == False:
 
@@ -1029,23 +1114,23 @@ class Simulatoin:
 
                 out_path += f'ep{ep:02d}_history.png'
 
-                self.environment.plot_history(out_path=out_path)
+                self.testing_environment.plot_history(out_path=out_path, truncate=self.testing_environment.I_t, annotate_action=load)
 
             reward_total += reward_eps
 
-            score_total += self.environment.evaluation()
+            score_total += self.testing_environment.global_reward()
 
         reward_avg = reward_total / max_episode
 
         score_avg = score_total / max_episode
 
-        if self.verbose:
+        if verbose:
 
             print("(Testing) Avg Reward {:>6.2f} | Avg Score {:>6.2f}".format(reward_avg, score_avg))
 
         self.agent.train()
 
-        return reward_avg.item(), score_avg, actions_list
+        return reward_avg, score_avg, actions_list
 
 
     def get_baseline(self, max_episodes=50, max_steps=400):
@@ -1066,7 +1151,7 @@ class Simulatoin:
 
                 action = NO_ACTION
                 
-                state, reward, is_terminal = self.environment.step(state, action, t=t)
+                state, reward, is_terminal = self.environment.step(state, action, t=t, max_step=max_steps)
 
                 rewards.append(reward)
 
@@ -1146,21 +1231,45 @@ class Simulatoin:
 
         v = 0   # V_T = 0
 
+        v_T = self.agent.rewards[-1]
+
+        t = 0
+        
         for r in self.agent.rewards[::-1]:   # r_T, r_{T-1}, .....r_0
 
-            v = r + self.gamma * v
+            if t < 300 - 150:
+
+                v = 0 * r
+            
+            elif t == 300 - 150:
+
+                v = v_T
+            
+            else:
+            
+                v = r + self.gamma * v
 
             accumulated_rewards.insert(0, v)
-
+            
+            t += 1
+        
         accumulated_rewards = torch.tensor(accumulated_rewards, device=device)
 
         accumulated_rewards = (accumulated_rewards - accumulated_rewards.mean()) / (accumulated_rewards.std() + 1e-9)
 
+        t = 0
+        
         for log_prob, R, value in zip(self.agent.log_probs, accumulated_rewards, self.agent.state_values):
             
+            if t >= 150:
+
+                break
+
             policy_loss += (-log_prob * (R - value.item()) )
 
             value_loss += F.smooth_l1_loss(value, torch.tensor([R], device=device))
+
+            t += 1
 
         loss = policy_loss + value_loss
 
@@ -1214,7 +1323,7 @@ class Simulatoin:
 
                     break
             
-            score_eps += self.environment.evaluation()
+            score_eps += self.environment.global_reward()
 
             if self.is_actor_critic:
 
@@ -1224,9 +1333,11 @@ class Simulatoin:
 
                 loss_eps = self.episodic_policy_loss()
 
+            _, test_score, _ = self.testing(max_steps=max_steps, greedy=True, plot=False, verbose=False)
+
             if self.verbose:
 
-                print("Episode {:>3d} | Loss {:>6.2f} | Total Reward {:>6.2f} | Avg Score {:>8.2f}".format(episode, loss_eps.item(), reward_eps, score_eps))
+                print("Episode {:>3d} | Avg Loss {:>6.2f} | Train Score {:>6.2f} | Test Score {:>6.2f}".format(episode, loss_eps.item(), score_eps, test_score) + " | " + self.testing_environment.evaluation())
 
             self.optimizer.zero_grad()
             
@@ -1234,11 +1345,11 @@ class Simulatoin:
 
             self.optimizer.step()
 
-            if score_eps > local_best:
+            if test_score > local_best:
 
                 self.save_agent()
 
-                local_best = score_eps
+                local_best = test_score
 
                 early_stop_flag = 0
             
@@ -1254,7 +1365,7 @@ class Simulatoin:
 
                 self.environment.plot_history(out_path=f'ep{episode:02d}_history.png')
 
-    def monti_carlo_estimation(self, iterations=3, num_rollouts=5, max_steps=400, early_stop=10, plot=False):
+    def monti_carlo_estimation(self, iterations=3, num_rollouts=5, max_steps=400, early_stop=30, plot=False):
 
         local_best = float('-inf')
 
@@ -1264,9 +1375,9 @@ class Simulatoin:
 
             loss_i = 0
 
-            total_reward = 0
+            train_reward = 0
 
-            total_score = 0
+            train_score = 0
 
             for _ in range(num_rollouts):
 
@@ -1291,20 +1402,18 @@ class Simulatoin:
                         actions_probs = self.agent.forward(state_observed)
 
                         action = self.agent.select_actions(actions_probs)
-                    
-                    state, reward, is_terminal = self.environment.step(state, action, t=t)
+  
+                    state, reward, is_terminal = self.environment.step(state, action, t=t, max_step=max_steps)
 
                     state_observed = self.environment.obeserved_state(state)
 
                     self.agent.rewards.append(reward)
 
-                    total_reward += reward
+                    train_reward += reward
 
-                    if is_terminal:
-
+                    if is_terminal: 
+                        
                         break
-                
-                total_score += self.environment.evaluation()
 
                 if self.is_actor_critic:
 
@@ -1313,19 +1422,22 @@ class Simulatoin:
                 else:
 
                     loss_i += self.episodic_policy_loss()
-            
+
+                train_score += self.environment.global_reward()
+
+            _, test_score, _ = self.testing(max_steps=max_steps, greedy=True, plot=False, verbose=False)
 
             loss_i /= num_rollouts
 
-            total_reward /= num_rollouts
+            train_reward /= num_rollouts
 
-            total_score /= num_rollouts
+            train_score /= num_rollouts
 
-            if total_score > local_best:
+            if test_score > local_best:
 
                 self.save_agent()
 
-                local_best = total_score
+                local_best = test_score
 
                 early_stop_flag = 0
             
@@ -1340,8 +1452,8 @@ class Simulatoin:
             self.optimizer.zero_grad()
 
             if self.verbose:
-
-                print("(MC) Iteration {:>3d} | Avg Loss {:>8.2f} | Avg Total Reward {:>8.2f} | Avg Score {:>8.2f}".format(i, loss_i.item(), total_reward.item(), total_score))
+               
+                print("(MC) Iteration {:>3d} | Avg Loss {:>6.2f} | Train Score {:>6.2f} | Test Score {:>6.2f}".format(i, loss_i.item(), train_score, test_score) + " | " + self.testing_environment.evaluation())
 
             loss_i.backward()
 
@@ -1371,6 +1483,21 @@ def main():
                     SWITCH_SHUTDOWN: 30-25,
                 SWITCH_MOVE_CONTROL: 30-25}
 
+    # cooldown_criteria = {TRADE_MASK: 7,
+    #                        SET_OPEN: 3,
+    #                       SET_OPEN2: 3,
+    #                        DEC_OPEN: 3,
+    #                 SWITCH_SHUTDOWN: 30,
+    #             SWITCH_MOVE_CONTROL: 30}
+
+    # cooldown_criteria = {TRADE_MASK: 7-7,
+    #                        SET_OPEN: 3-3,
+    #                       SET_OPEN2: 3-3,
+    #                        DEC_OPEN: 3-3,
+    #                 SWITCH_SHUTDOWN: 30-30,
+    #             SWITCH_MOVE_CONTROL: 30-30}
+
+
     args_agent = {
         "dim_input": 7, 
         "dim_output": 7,
@@ -1379,14 +1506,15 @@ def main():
         "cooldown_criteria": cooldown_criteria
     }
 
-    #agent = Agent(**args_agent).to(device)
-    #agent = GRUAgent(**args_agent).to(device)
+    # agent = Agent(**args_agent).to(device)
+
+    # agent = GRUAgent(**args_agent).to(device)
 
     agent = ActorCriticAgent(**args_agent).to(device)
 
     env = Environment()
 
-    optimizer = optim.Adam(agent.parameters(), lr=1e-2)
+    optimizer = optim.Adam(agent.parameters(), lr=5e-3)
 
     game = Simulatoin(agent, env, optimizer, verbose=True, gamma=0.99)
 
@@ -1394,10 +1522,9 @@ def main():
 
     r_0, s_0, a_0 = game.testing(max_steps=300, max_episode=50, greedy=False)
 
-
     try:
         # game.episodes(max_episodes=1000, max_steps=200, plot=False)
-        game.monti_carlo_estimation(iterations=100, num_rollouts=20, max_steps=300, plot=False)
+        game.monti_carlo_estimation(iterations=100, num_rollouts=5, max_steps=300, plot=False)
     
     except KeyboardInterrupt:
 
