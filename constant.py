@@ -16,3 +16,12 @@ SWITCH_SHUTDOWN = 4
 SWITCH_MOVE_CONTROL = 5
 NO_ACTION = 6
 
+ACTIONS = {
+    0: 'TRADE MASK',
+    1: 'SET OPEN',
+    2: 'SET OPEN2',
+    3: 'DEC OPEN',
+    4: 'S/ SHUT',
+    5: 'S/ MOVE',
+    6: 'NO ACTION',
+}
