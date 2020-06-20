@@ -56,7 +56,7 @@ class Environment:
         update_gamma_move: To update gamma_move
         start(property): Return the starting starting state of a trial.
     """
-    def __init__(self, config_path='config.json', immediate_reward=False):
+    def __init__(self, config_path='config.json', immediate_reward=True, gamma=0.99):
 
         self._config = self._load_config(config_path)
 
@@ -69,6 +69,8 @@ class Environment:
         self._warning_threshold = 0.25
 
         self._danger_threshold = 0.75
+
+        self._gamma = gamma
 
         self._immediate_reward = immediate_reward
     
@@ -172,6 +174,8 @@ class Environment:
         """ update state """
         self._assert_all(s=s, if_seir=True)
 
+        _origin_immediate_reward = self.get_immediate_reward(s)
+
         # record move weight and bias when timestep is at early threshold
         if t == self._config['early_threshold']:
 
@@ -191,15 +195,15 @@ class Environment:
 
             self.gamma_shut = 0.3
 
-            s[N_GOLD] = max(0, s[N_GOLD] - self._config['shut_rate'] * t)
+            s[N_GOLD] = s[N_GOLD] - self._config['shut_rate']
 
         else:
 
             self.gamma_shut = 1
 
             if s[N_GOLD] < self._config['N_gold']:
-                
-                s[N_GOLD] = min(self._config['N_gold'], s[N_GOLD] + 0.01 * self._config['shut_rate'] * t)
+
+                s[N_GOLD] = min(self._config['N_gold'], s[N_GOLD] + 0.01 * self._config['shut_rate'])
 
         # conduct action
         if a == TRADE_MASK:
@@ -335,148 +339,63 @@ class Environment:
 
         """ update reward """
         
-        reward = 0 * s[N_GOLD]
+        immediat_reward = 0.
 
         if self._immediate_reward:
 
-            reward += self.reward(t)
+            immediat_reward = self._gamma * self.get_immediate_reward(s) - _origin_immediate_reward
 
-        # delta_S = (- SI - SE - SE_move) / self._config['N_total']
-
-        # delta_E = (SI + SE - EI - EQ) / self._config['N_total']
-
-        # delta_E_move = (SE_move - EI_move - EQ_move) / self._config['N_total']
-
-        # delta_Q = (EQ - QI) / self._config['N_total']
-
-        # delta_Q_move = (EQ_move - QI_move) / self._config['N_total']
-
-        # delta_I = (EI + EI_move + QI + QI_move - IR) / self._config['N_total']
-
-        # the delta of each seir component is more important in the begining.
-        # seir_delta_reward = (5000 / (t + 10)) * (3 * delta_S - 2 * delta_I  - (delta_Q + delta_Q_move)- (delta_E + delta_E_move))
-        
-        # the state of S is more important in the end of period.
-        # seir_reward = math.log((t + 31) / 5) * (3 * self.S)
-        
-        # the state of other components in seir model is more important in the begining.
-        # seir_reward = (100 / (t + 10)) * (- 2 * self.I - (self.Q + self.Q_move) - (self.E + self.E_move))
-
-        # seir_reward /= self._config['N_total']
-
-        # reward = s[N_GOLD] + seir_delta_reward + seir_reward
+        terminal_reward = 0.
         
         if self.R / self._config['N_total'] > 0.9 and not test:
 
-            reward = self.evaluation()
-
-            # if self.E_MAX / self._config['N_total'] > self._danger_threshold:
-
-            #     reward -= 20
-            
-            # elif self.E_MAX / self._config['N_total'] > self._warning_threshold:
-
-            #     reward -= 10
-            
-            # else:
-                
-            #     reward += 50
-
-            # if self.I_MAX / self._config['N_total'] > self._danger_threshold:
-
-            #     reward -= 50
-            
-            # elif self.I_MAX / self._config['N_total'] > self._warning_threshold:
-                
-            #     reward -= 30
-            
-            # else:
-
-            #     reward += 100
+            terminal_reward = self.evaluation()
 
             self.is_terminal = True
+
+        reward = (terminal_reward, immediat_reward)
         
         self._assert_all(s=s, if_seir=True, if_variable=True)
 
-        self.update_history(t, a, reward)
+        self.update_history(t, a, s[N_GOLD].item(), sum(reward))
 
         return s, reward, self.is_terminal
 
-    def reward(self, t):
+    def get_immediate_reward(self, state):
 
-        reward = 0
+        score = state[N_GOLD] - (self.E + self.I * 2) / self._config['N_total']
 
-        if self.E / self._config['N_total'] > self._warning_threshold and self.E_L == None:
-
-            self.E_L = t
-        
-        if self.E / self._config['N_total'] < self._warning_threshold and self.E_L != None and self.E_R == None:
-
-            self.E_R = t
-
-
-        if self.E / self._config['N_total'] > self._warning_threshold:
-
-            reward -= 0.5
-        
-        elif self.E / self._config['N_total'] > self._danger_threshold:
-
-            reward -= 1
-        
-
-        if self.I / self._config['N_total'] > self._warning_threshold and self.I_L == None:
-
-            self.I_L = t
-        
-        if self.I / self._config['N_total'] < self._warning_threshold and self.I_L != None and self.I_R == None:
-
-            self.I_R = t
-
-
-        if self.I / self._config['N_total'] > self._warning_threshold:
-
-            reward -= 1.0
-        
-        elif self.I / self._config['N_total'] > self._danger_threshold:
-
-            reward -= 1.5
-        
-
-        if self.S / self._config['N_total'] < 0.1:
-
-            reward -= 1
-
-        return reward
+        return score
 
     def evaluation(self):
         
-        score = 0
+        score_e = 0.
 
         if self.E_MAX / self._config['N_total'] < self._warning_threshold:
         
-            score += 1
+            score_e += 10
         
         elif self.E_MAX / self._config['N_total'] < self._danger_threshold:
 
-            score += 0.5
+            score_e += 5
         
         else:
 
-            score -= 5
+            score_e -= 10
         
-        if self.I_MAX / self._config['N_total'] < self._warning_threshold:
+        # if self.I_MAX / self._config['N_total'] < self._warning_threshold:
         
-            score += 2
+        #     score += 2
         
-        elif self.I_MAX / self._config['N_total'] < self._danger_threshold:
+        # elif self.I_MAX / self._config['N_total'] < self._danger_threshold:
 
-            score += 1
+        #     score += 1
         
-        else:
+        # else:
 
-            score -= 10
+        #     score -= 10
 
-        return score
+        return score_e
 
     def _assert_all(self, s=None, if_config=False, if_variable=False, if_seir=False, if_all=False):
         """ To assert that all values in environment are reasonable.
@@ -603,7 +522,7 @@ class Environment:
 
             self.gamma_move = max(0, self.gamma_move)
 
-    def update_history(self, t, action, reward, update_list=['S', 'E', 'E_move', 'Q', 'Q_move', 'I', 'R']):
+    def update_history(self, t, action, gold, reward, update_list=['S', 'E', 'E_move', 'Q', 'Q_move', 'I', 'R']):
         """ To update history including seir model and other states.
 
         Args:
@@ -614,15 +533,17 @@ class Environment:
 
         self._history['time'].append(t)
 
-        self._history['reward'].append(reward)
-
         self._history['action'].append(action)
+
+        self._history['gold'].append(gold)
+
+        self._history['reward'].append(reward)
 
         for name in update_list:
 
             self._history[name].append(getattr(self, name) / self._config['N_total'])
     
-    def plot_history(self, plot_list=['S', 'E', 'I', 'R'], out_path='history.png', truncate=-1, staggered=True, annotate_action=False):
+    def plot_history(self, plot_list=['S', 'E', 'I', 'R', 'gold'], out_path='history.png', truncate=-1, staggered=True, annotate_action=False):
         """ To plot people transmission history line chart.
 
         Args:
@@ -639,7 +560,8 @@ class Environment:
             'R': ('Recovered', 'red'),
             'E_move': ('Exposed(move)', 'magenta'),
             'Q_move': ('Quarantine(move)', 'black'),
-            'reward': ('Reward', 'magenta')
+            'reward': ('Reward', 'magenta'),
+            'gold': ('Gold', 'black'),
         }
 
         if any(name not in display_config for name in plot_list):
@@ -989,7 +911,7 @@ class Simulatoin:
 
         self.environment = environment
 
-        self.testing_environment = Environment(config_path='config_test.json')
+        self.testing_environment = Environment(config_path='config_test.json', gamma=gamma)
 
         self.gamma = gamma
 
@@ -1050,7 +972,7 @@ class Simulatoin:
                 
                 state, reward, is_terminal = self.testing_environment.step(state, action, t=t, test=True)
 
-                reward_eps += reward
+                reward_eps += sum(reward)
 
                 state_observed = self.testing_environment.obeserved_state(state)
 
@@ -1072,11 +994,11 @@ class Simulatoin:
 
                 out_path += f'ep{ep:02d}_history.png'
 
-                self.testing_environment.plot_history(out_path=out_path, truncate=self.testing_environment.I_t, annotate_action=load)
+                self.testing_environment.plot_history(out_path=out_path, truncate=200, annotate_action=True)
 
             reward_total += reward_eps
 
-            score_total += self.testing_environment.evaluation()
+            score_total += self.testing_environment.evaluation() + self.testing_environment.get_immediate_reward(state)
 
         reward_avg = reward_total / max_episode
 
@@ -1088,8 +1010,7 @@ class Simulatoin:
 
         self.agent.train()
 
-        return reward_avg.item(), score_avg, actions_list
-
+        return reward_avg, score_avg, actions_list
 
     def get_baseline(self, max_episodes=50, max_steps=400):
 
@@ -1111,7 +1032,7 @@ class Simulatoin:
                 
                 state, reward, is_terminal = self.environment.step(state, action, t=t)
 
-                rewards.append(reward)
+                rewards.append(sum(reward))
 
                 if is_terminal:
 
@@ -1181,51 +1102,61 @@ class Simulatoin:
 
         value_loss = 0
 
-        accumulated_rewards = []
+        accumulated_rewards_terminal, accumulated_rewards_immediate = [], []
 
         # v_t = r_t + gammar*v_{t+1}
         # v_T = 0
         # agent.rewards : [r_0, r_1, r_2, ........ r_T]
 
-        v = 0   # V_T = 0
+        v_terminal, v_immediate = 0, 0   # V_T = 0
 
-        v_T = self.agent.rewards[-1]
+        v_terminal_T, v_immediate_T = self.agent.rewards[-1]
 
         t = 0
 
-        for r in self.agent.rewards[::-1]:   # r_T, r_{T-1}, .....r_0
+        for r_terminal, r_immediate in self.agent.rewards[::-1]:   # r_T, r_{T-1}, .....r_0
 
-            if t < 300 - 150:
+            if t < 300 - self.environment.E_t:
 
-                v = 0 * r
+                v_terminal = 0 * r_terminal
+
+                v_immediate = 0 * r_immediate
             
-            elif t == 300 - 150:
+            elif t == 300 - self.environment.E_t:
 
-                v = v_T
+                v_terminal = v_terminal_T
+
+                v_immediate = v_immediate_T
             
             else:
             
-                v = r + self.gamma * v
+                v_terminal = r_terminal + self.gamma * v_terminal
 
-            accumulated_rewards.insert(0, v)
+                v_immediate = r_immediate + self.gamma * v_immediate
+
+            accumulated_rewards_terminal.insert(0, v_terminal)
+
+            accumulated_rewards_immediate.insert(0, v_immediate)
             
             t += 1
 
-        accumulated_rewards = torch.tensor(accumulated_rewards, device=device)
+        accumulated_rewards_terminal = torch.tensor(accumulated_rewards_terminal, device=device)
 
-        accumulated_rewards = (accumulated_rewards - accumulated_rewards.mean()) / (accumulated_rewards.std() + 1e-9)
+        accumulated_rewards_immediate = torch.tensor(accumulated_rewards_immediate, device=device)
+
+        accumulated_rewards_terminal = (accumulated_rewards_terminal - accumulated_rewards_terminal.mean()) / (accumulated_rewards_terminal.std() + 1e-9)
+        
+        accumulated_rewards_immediate = (accumulated_rewards_immediate - accumulated_rewards_immediate.mean()) / (accumulated_rewards_immediate.std() + 1e-9)
 
         t = 0
         
-        for log_prob, R, value in zip(self.agent.log_probs, accumulated_rewards, self.agent.state_values):
+        for log_prob, (R_terminal, R_immediate), value in zip(self.agent.log_probs, zip(accumulated_rewards_terminal, accumulated_rewards_immediate), self.agent.state_values):
             
-            if t >= 150:
+            if t < self.environment.E_t:
 
-                break
+                policy_loss += (-log_prob * ((R_terminal + R_immediate) - value.item()))
 
-            policy_loss += (-log_prob * (R - value.item()) )
-
-            value_loss += F.smooth_l1_loss(value, torch.tensor([R], device=device))
+                value_loss += F.smooth_l1_loss(value, torch.tensor([R_terminal + R_immediate], device=device))
 
             t += 1
 
@@ -1271,7 +1202,7 @@ class Simulatoin:
 
                 state, reward, is_terminal = self.environment.step(state, action, t=t)
 
-                reward_eps+=reward
+                reward_eps += sum(reward)
 
                 state_observed = self.environment.obeserved_state(state)
 
@@ -1367,7 +1298,7 @@ class Simulatoin:
 
                     self.agent.rewards.append(reward)
 
-                    train_reward += reward
+                    train_reward += sum(reward)
 
                     if is_terminal: 
                         
@@ -1381,9 +1312,9 @@ class Simulatoin:
 
                     loss_i += self.episodic_policy_loss()
 
-                train_score += self.environment.evaluation()
+                train_score += self.environment.evaluation() + self.environment.get_immediate_reward(state)
 
-            _, test_score, _ = self.testing(max_steps=max_steps, greedy=True, plot=False, verbose=False)
+            test_reward, test_score, _ = self.testing(max_steps=max_steps, max_episode=10, greedy=True, plot=False, verbose=False)
 
             loss_i /= num_rollouts
 
@@ -1411,7 +1342,7 @@ class Simulatoin:
 
             if self.verbose:
 
-                print("(MC) Iteration {:>3d} | Avg Loss {:>8.2f} | Train Score {:>8.2f} | Test Score {:>8.2f}".format(i, loss_i.item(), train_score, test_score))
+                print("(MC) Iteration {:>3d} | Avg Loss {:>6.2f} | Train Reward/Score {:>6.2f}/{:>6.2f} | Test Reward/Score {:>6.2f}/{:>6.2f}".format(i, loss_i.item(), train_reward, train_score, test_reward, test_score))
 
             loss_i.backward()
 
@@ -1455,11 +1386,11 @@ def main():
 
     agent = ActorCriticAgent(**args_agent).to(device)
 
-    env = Environment()
+    env = Environment(gamma=0.9)
 
     optimizer = optim.Adam(agent.parameters(), lr=5e-3)
 
-    game = Simulatoin(agent, env, optimizer, verbose=True, gamma=0.99)
+    game = Simulatoin(agent, env, optimizer, verbose=True, gamma=0.9)
 
     game.is_actor_critic = True
 
