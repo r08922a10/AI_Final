@@ -42,5 +42,5 @@
 
     "p_move": 0.01,
     "early_threshold": 30,
-    "shut_rate": 0.001
+    "shut_rate": 0.05
 }
