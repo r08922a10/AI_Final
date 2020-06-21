@@ -981,13 +981,6 @@ class Simulatoin:
                     else:
 
                         action = agent.select_actions(actions_probs)
-                '''
-                if t <=2:
-                    print(actions_probs)
-                    print(action)
-                else:
-                    exit()
-                '''
                 
                 state, reward, is_terminal = self.testing_environment.step(state, action, t=t, test=True)
 
