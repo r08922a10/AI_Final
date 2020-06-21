@@ -44,7 +44,6 @@ class Environment:
         gamma_detect_move: the factor of mask trade to affect COVID detection(move)
         gamma_move: the factor of moving to affect population of moving
         gamma_shut: the factor of shutdown to affect infectious degree
-
         move_w: the weight to affect the factor of moving(gamma_move)
         move_b: the bias to affect the factor of moving(gamma_move)
     Methods
@@ -79,7 +78,6 @@ class Environment:
         """ Load the environment configuration.
         Returns:
             The dictionary of environment configuration.
-
         """
         try:
 
@@ -96,7 +94,6 @@ class Environment:
         """ We need to define this function to initialize the environment.
         Returns:
             The starting state of the environment
-
         """
         if test:
             
@@ -145,7 +142,6 @@ class Environment:
    
     def step(self, s, a, t, test=False):
         """ We need to define this function as the transition function.(SEIR....)
-
         Args:
             s: current state
                 0: N_MASK, number of masks
@@ -154,7 +150,6 @@ class Environment:
                 3: IF_SHUTDOWN, 1: shutdown / 0: not shutdown
                 4: IF_MOVE_CONTROL, 1: moving control / 0: moveing free
                 5: N_GOLDnumber of gold
-
             a: action taken by agent in current state
                 0: TRADE_MASK, Trade masks
                 1: SET_OPEN, set openness to 0.5 (current openness should be smaller than 0.5)
@@ -164,11 +159,9 @@ class Environment:
                 5: SWITCH_MOVE_CONTROL, switch moving mode
                 6: NO_ACTION, do nothing
             t: timestep
-
         Returns:
             next_sate: The next state (aka  s' ) given by s and a .
             reward of (s, a, s')
-
         """
         
         """ update state """
@@ -203,7 +196,20 @@ class Environment:
 
             if s[N_GOLD] < self._config['N_gold']:
 
-                s[N_GOLD] = min(self._config['N_gold'], s[N_GOLD] + 0.01 * self._config['shut_rate'])
+                s[N_GOLD] = min(self._config['N_gold'], s[N_GOLD] + 0.03 * self._config['shut_rate'])
+
+
+        # update number of gold by determining if it is move control
+        if s[IF_MOVE_CONTROL] == 1:
+
+            s[N_GOLD] = s[N_GOLD] - self._config['inc_move']
+
+        else:
+
+            if s[N_GOLD] < self._config['N_gold']:
+
+                s[N_GOLD] = min(self._config['N_gold'], s[N_GOLD] + 0.03 * self._config['inc_move'])
+
 
         # conduct action
         if a == TRADE_MASK:
@@ -251,14 +257,6 @@ class Environment:
         elif a == SWITCH_MOVE_CONTROL:
 
             s[IF_MOVE_CONTROL] = 1 - s[IF_MOVE_CONTROL]
-
-            if s[IF_MOVE_CONTROL] == 1:
-
-                s[N_GOLD] -= self._config['inc_move']
-
-            else:
-
-                s[N_GOLD] += self._config['inc_move']
 
         self.update_gamma_mask(s)
 
@@ -399,7 +397,6 @@ class Environment:
 
     def _assert_all(self, s=None, if_config=False, if_variable=False, if_seir=False, if_all=False):
         """ To assert that all values in environment are reasonable.
-
         Args:
             s: the state you want to assert values. Note that only required when if_variable is True.
             if_config: if True assert all configs in initialization file are reasonable. 
@@ -479,13 +476,11 @@ class Environment:
 
     def obeserved_state(self, state):
         """ To transform the global state to the obsevable state for agent.
-
         Args:
             state : global state
      
         Returns:
             observed_state : obsevable state for agent
-
         """
         observed_state = torch.zeros(7).to(device)
         observed_state[:5] = state[:5].clone()
@@ -495,10 +490,8 @@ class Environment:
     
     def update_gamma_mask(self, s):
         """ To update gamma_mask via openness and max of masks constant.
-
         Args:
             s : global state
-
         """
         self.gamma_mask = (1 - 0.8 * s[N_OPEN]) * self._config['MAX_mask'] / s[N_MASK]
        
@@ -506,11 +499,9 @@ class Environment:
 
     def update_gamma_move(self, s, t):
         """ To update gamma_move in two different way according to timestep.
-
         Args:
             s : global state
             t : timestep
-
         """
         if t <= self._config['early_threshold']:
 
@@ -524,11 +515,9 @@ class Environment:
 
     def update_history(self, t, action, gold, reward, update_list=['S', 'E', 'E_move', 'Q', 'Q_move', 'I', 'R']):
         """ To update history including seir model and other states.
-
         Args:
             s : global state
             t : timestep
-
         """
 
         self._history['time'].append(t)
@@ -540,17 +529,20 @@ class Environment:
         self._history['reward'].append(reward)
 
         for name in update_list:
+            if name == 'Q' or name == 'Q_move':
 
-            self._history[name].append(getattr(self, name) / self._config['N_total'])
+                self._history[name].append(getattr(self, name) / self._config['MAX_Q'])
+
+            else: 
+
+                self._history[name].append(getattr(self, name) / self._config['N_total'])
     
-    def plot_history(self, plot_list=['S', 'E', 'I', 'R', 'gold'], out_path='history.png', truncate=-1, staggered=True, annotate_action=False):
+    def plot_history(self, plot_list=['S', 'E', 'I', 'R', 'Q', 'Q_move', 'gold'], out_path='history.png', truncate=-1, staggered=True, annotate_action=False):
         """ To plot people transmission history line chart.
-
         Args:
             plot_list:  plot the attributes in this class.
                         please make sure you have store the attributes in update_history
             out_path: save figure to the path.
-
         """
         display_config = {
             'S': ('Susceptible', 'blue'),
@@ -559,7 +551,7 @@ class Environment:
             'I': ('Infectious', 'green'),
             'R': ('Recovered', 'red'),
             'E_move': ('Exposed(move)', 'magenta'),
-            'Q_move': ('Quarantine(move)', 'black'),
+            'Q_move': ('Quarantine(move)', 'brown'),
             'reward': ('Reward', 'magenta'),
             'gold': ('Gold', 'black'),
         }
@@ -1257,7 +1249,7 @@ class Simulatoin:
     def monti_carlo_estimation(self, iterations=3, num_rollouts=5, max_steps=400, early_stop=30, plot=False):
 
         local_best = float('-inf')
-
+        
         early_stop_flag = 0
 
         for i in range(iterations):
@@ -1379,10 +1371,6 @@ def main():
         "init_legal_actions": init_legal_actions,
         "cooldown_criteria": cooldown_criteria
     }
-
-    # agent = Agent(**args_agent).to(device)
-
-    # agent = GRUAgent(**args_agent).to(device)
 
     agent = ActorCriticAgent(**args_agent).to(device)
 

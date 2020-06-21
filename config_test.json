@@ -23,10 +23,10 @@
     "N_total": 23000600,
     "N_mask": 0.1,
     "N_donate": 2000000,
-    "inc_mask": 0.0005,
+    "inc_mask": 0.00001,
     "inc_recover": 0.1,  
     "inc_detect": 0.1, 
-    "inc_move": 0.1, 
+    "inc_move": 0.0013, 
     "N_gold": 0.3,
     "N_open": 0.2,
 
@@ -40,7 +40,7 @@
     "gamma_detect": 1,
     "gamma_detect_move": 1,
 
-    "p_move": 0.01,
+    "p_move": 0.05,
     "early_threshold": 30,
-    "shut_rate": 0.001
+    "shut_rate": 0.0039
 }
