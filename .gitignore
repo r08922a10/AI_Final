@@ -2,3 +2,4 @@
 /__pycache__/
 *.png
 .save/*
+test_random.py

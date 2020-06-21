@@ -13,7 +13,7 @@ mpl.use('Agg')
 import matplotlib.pyplot as plt
 
 np.random.seed(666)
-torch.manual_seed(666)
+#torch.manual_seed(666)
 
 from constant import *
 
@@ -642,6 +642,7 @@ class Agent(nn.Module):
         current_cooldown: CD time at current time step. This should be initialized to all zero value
     Methods
     -------
+        init_weight : initialize the weights of the model with given distribution.
         init_agent: reset the history fo the log probability and rewards
         forward: the inference of the policy network
         select_actions: return the action sampled from the policy nwetwork
@@ -681,6 +682,12 @@ class Agent(nn.Module):
         self.cooldown_criteria = cooldown_criteria
 
         self.current_cooldown = None
+
+    def init_weight(self, init_func, *params, **kwargs):
+
+        for p in self.parameters():
+
+            init_func(p, *params, **kwargs)
 
     def init_agent(self):
 
@@ -897,9 +904,11 @@ class Simulatoin:
         load_agent:
     """
 
-    def __init__(self, agent: Agent, environment: Environment, optimizer=None, gamma=0.9, verbose=False):
+    def __init__(self, agent: Agent, baseline_agent: Agent, environment: Environment, optimizer=None, gamma=0.9, verbose=False):
 
         self.agent = agent
+
+        self.baseline_agent = baseline_agent
 
         self.environment = environment
 
@@ -915,13 +924,23 @@ class Simulatoin:
 
         self.is_actor_critic = False
 
-    def testing(self, max_steps=300, max_episode=1, greedy=True, load=False, plot=True, verbose=True):
+    def testing(self, max_steps=300, max_episode=1, greedy=True, load=False, plot=True, verbose=True, baseline=False):
+
+        assert (load and not baseline) or (not load), "If we set the baseline to True and load to True, the loaded agent will not be tested."
 
         if load:
 
             self.load_agent()
 
-        self.agent.eval()
+        if baseline:
+
+            agent = self.baseline_agent
+
+        else:
+
+            agent = self.agent
+
+        agent.eval()
 
         reward_total = 0
 
@@ -931,7 +950,7 @@ class Simulatoin:
 
         for ep in range(max_episode):
 
-            self.agent.init_agent()
+            agent.init_agent()
 
             state = self.testing_environment.init_state(test=True)
 
@@ -943,24 +962,25 @@ class Simulatoin:
 
             for t in range(max_steps):
 
-                actions_probs = self.agent.forward(state_observed)
+                actions_probs = agent.forward(state_observed)
 
                 if greedy:
 
-                    action = self.agent.greedy_actions(actions_probs)
+                    action = agent.greedy_actions(actions_probs)
+
 
                 else:
 
                     if self.is_actor_critic:
                         
-                        state_values = self.agent.forward_value(state_observed)
+                        state_values = agent.forward_value(state_observed)
 
-                        action = self.agent.select_actions(actions_probs, state_values)
+                        action = agent.select_actions(actions_probs, state_values)
 
 
                     else:
 
-                        action = self.agent.select_actions(actions_probs)
+                        action = agent.select_actions(actions_probs)
                 
                 state, reward, is_terminal = self.testing_environment.step(state, action, t=t, test=True)
 
@@ -986,7 +1006,7 @@ class Simulatoin:
 
                 out_path += f'ep{ep:02d}_history.png'
 
-                self.testing_environment.plot_history(out_path=out_path, truncate=200, annotate_action=True)
+                self.testing_environment.plot_history(plot_list=["E", "I", "gold"], out_path=out_path, truncate=200, annotate_action=True)
 
             reward_total += reward_eps
 
@@ -1000,7 +1020,7 @@ class Simulatoin:
 
             print("(Testing) Avg Reward {:>6.2f} | Avg Score {:>6.2f}".format(reward_avg, score_avg))
 
-        self.agent.train()
+        agent.train()
 
         return reward_avg, score_avg, actions_list
 
@@ -1136,15 +1156,16 @@ class Simulatoin:
 
         accumulated_rewards_immediate = torch.tensor(accumulated_rewards_immediate, device=device)
 
-        accumulated_rewards_terminal = (accumulated_rewards_terminal - accumulated_rewards_terminal.mean()) / (accumulated_rewards_terminal.std() + 1e-9)
+        #accumulated_rewards_terminal = (accumulated_rewards_terminal - accumulated_rewards_terminal.mean()) / (accumulated_rewards_terminal.std() + 1e-9)
         
-        accumulated_rewards_immediate = (accumulated_rewards_immediate - accumulated_rewards_immediate.mean()) / (accumulated_rewards_immediate.std() + 1e-9)
+        #accumulated_rewards_immediate = (accumulated_rewards_immediate - accumulated_rewards_immediate.mean()) / (accumulated_rewards_immediate.std() + 1e-9)
 
         t = 0
         
         for log_prob, (R_terminal, R_immediate), value in zip(self.agent.log_probs, zip(accumulated_rewards_terminal, accumulated_rewards_immediate), self.agent.state_values):
             
             if t < self.environment.E_t:
+
 
                 policy_loss += (-log_prob * ((R_terminal + R_immediate) - value.item()))
 
@@ -1350,7 +1371,7 @@ class Simulatoin:
 
     def load_agent(self, in_path='./save/model.pt'):
 
-        self.agent = torch.load(in_path)               
+        self.agent = torch.load(in_path)           
             
 
 def main():
@@ -1374,18 +1395,25 @@ def main():
 
     agent = ActorCriticAgent(**args_agent).to(device)
 
+    baseline_agent = ActorCriticAgent(**args_agent).to(device)
+
+    agent.init_weight(torch.nn.init.normal_, mean=0., std=0.01)
+
+    baseline_agent.init_weight(torch.nn.init.zeros_)
+
     env = Environment(gamma=0.9)
 
-    optimizer = optim.Adam(agent.parameters(), lr=5e-3)
+    optimizer = optim.Adam(agent.parameters(), lr=5e-2)
 
-    game = Simulatoin(agent, env, optimizer, verbose=True, gamma=0.9)
+    game = Simulatoin(agent, baseline_agent, env, optimizer, verbose=True, gamma=0.9)
 
     game.is_actor_critic = True
 
-    r_0, s_0, a_0 = game.testing(max_steps=300, max_episode=50, greedy=False)
+    #r_0, s_0, a_0 = game.testing(max_steps=300, max_episode=50, greedy=False, baseline=True) # Random walk
+    r_0, s_0, a_0 = game.testing(max_steps=300, max_episode=50, greedy=True, baseline=True) # No action
 
     try:
-        # game.episodes(max_episodes=1000, max_steps=200, plot=False)
+        #game.episodes(max_episodes=1000, max_steps=200, plot=False)
         game.monti_carlo_estimation(iterations=100, num_rollouts=5, max_steps=300, plot=False)
     
     except KeyboardInterrupt:
