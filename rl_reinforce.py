@@ -686,7 +686,7 @@ class Agent(nn.Module):
     def init_weight(self, init_func, *params, **kwargs):
 
         for p in self.parameters():
-            
+
             init_func(p, *params, **kwargs)
 
     def init_agent(self):
