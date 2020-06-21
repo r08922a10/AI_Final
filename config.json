@@ -23,7 +23,7 @@
     "N_total": 23000130,
     "N_mask": 0.1,
     "N_donate": 2000000,
-    "inc_mask": 0.01,
+    "inc_mask": 0.0005,
     "inc_recover": 0.1,  
     "inc_detect": 0.1, 
     "inc_move": 0.1, 
@@ -42,5 +42,5 @@
 
     "p_move": 0.01,
     "early_threshold": 30,
-    "shut_rate": 0.00001
+    "shut_rate": 0.05
 }
